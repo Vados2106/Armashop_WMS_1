@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WMS Scanner MVP</title>
+  <title>WMS Scanner MVP — v1.2 Hotfix</title>
   <style>
     body{ font-family: system-ui, Arial, sans-serif; margin:0; padding:16px; }
     .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
@@ -17,10 +17,12 @@
     .err{ color:#c33; }
     .qtypad button{ min-width:60px; font-size:18px; }
     .grid{ display:grid; grid-template-columns:1fr auto; gap:8px; }
+    .badge{ display:inline-block; background:#eef; border:1px solid #ccd; border-radius:8px; padding:4px 8px; }
   </style>
 </head>
 <body>
-  <h2>📦 WMS Scanner — MVP</h2>
+  <h2>📦 WMS Scanner — MVP <span class="badge">v1.2 hotfix</span></h2>
+  <div class="muted">Если видишь эту строчку — JS загрузился 👍</div>
 
   <div class="card">
     <div class="row">
@@ -55,7 +57,7 @@
       <button id="switchCamBtn">Пробовать другую камеру</button>
       <span id="scanInfo" class="muted"></span>
     </div>
-    <span id="diagInfo" class="muted" style="display:block;margin-top:6px;"></span>
+    <pre id="diagInfo" class="muted" style="white-space:pre-wrap;margin-top:6px;"></pre>
     <div id="lastScan" class="muted" style="margin-top:8px;"></div>
   </div>
 
@@ -84,7 +86,7 @@
   $('#saveCfg').onclick = ()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=> $('#cfgStatus').textContent='', 1500); };
   loadCfg();
 
-  // === Камера / ZXing + диагностика ===
+  // ZXing
   const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
   let deviceList = []; let currentDeviceIndex = -1;
 
@@ -92,69 +94,184 @@
     await stopCam();
     try{
       const res = await navigator.mediaDevices.getUserMedia({ video: { facingMode:{ ideal:'environment' } } });
-      state.stream = res; const video=$('#preview'); video.srcObject=res; await video.play(); state.track=res.getVideoTracks()[0];
-      scanLoop(); $('#scanInfo').textContent='Камера запущена (environment)';
+      await attachStream(res, 'Камера запущена (environment)');
     }catch(err){ $('#scanInfo').textContent='Не удалось environment: '+err.name; await startCamFallback(); }
   }
 
   async function startCamFallback(){
-    const cams = await listCameras(); if(!cams.length){ $('#scanInfo').textContent='Камеры не найдены (HTTPS/разрешения)'; return; }
+    const cams = await listCameras();
+    if(!cams.length){ $('#scanInfo').textContent='Камеры не найдены (HTTPS/разрешения)'; return; }
     currentDeviceIndex = 0; await startByDeviceIndex(currentDeviceIndex);
   }
 
+  async function attachStream(res, msg){
+    state.stream = res; const video=$('#preview'); video.srcObject=res; await video.play(); state.track=res.getVideoTracks()[0];
+    $('#scanInfo').textContent = msg; scanLoop();
+  }
+
   async function listCameras(){
-    try{ if(!state.stream){ await navigator.mediaDevices.getUserMedia({ video:true }); await stopCam(); }
-      const devices = await navigator.mediaDevices.enumerateDevices(); deviceList = devices.filter(d=>d.kind==='videoinput'); return deviceList;
+    try{
+      if(!state.stream){ // иногда список камер не даёт без первичного запроса
+        const tmp = await navigator.mediaDevices.getUserMedia({ video:true });
+        tmp.getTracks().forEach(t=>t.stop());
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      deviceList = devices.filter(d=>d.kind==='videoinput');
+      return deviceList;
     }catch(err){ $('#diagInfo').textContent='enumerateDevices error: '+err; return []; }
   }
 
   async function startByDeviceIndex(i){
-    await stopCam(); if(!deviceList.length){ await listCameras(); } if(!deviceList.length){ $('#scanInfo').textContent='Нет камер'; return; }
+    await stopCam();
+    if(!deviceList.length){ await listCameras(); }
+    if(!deviceList.length){ $('#scanInfo').textContent='Нет камер'; return; }
     const dev = deviceList[i % deviceList.length];
-    try{ const res = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: dev.deviceId } } });
-      state.stream=res; const video=$('#preview'); video.srcObject=res; await video.play(); state.track=res.getVideoTracks()[0];
-      $('#scanInfo').textContent='Камера: '+(dev.label||'без имени'); scanLoop();
+    try{
+      const res = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: dev.deviceId } } });
+      await attachStream(res, 'Камера: '+(dev.label||'без имени'));
     }catch(err){ $('#scanInfo').textContent='Старт по deviceId не удался: '+err.name; }
   }
 
-  async function switchCamera(){ if(!deviceList.length){ await listCameras(); } if(!deviceList.length){ $('#scanInfo').textContent='Нет камер для переключения'; return; } currentDeviceIndex=(currentDeviceIndex+1)%deviceList.length; await startByDeviceIndex(currentDeviceIndex); }
+  async function switchCamera(){
+    if(!deviceList.length){ await listCameras(); }
+    if(!deviceList.length){ $('#scanInfo').textContent='Нет камер для переключения'; return; }
+    currentDeviceIndex=(currentDeviceIndex+1)%deviceList.length;
+    await startByDeviceIndex(currentDeviceIndex);
+  }
 
-  function diag(){ const isHttps = location.protocol==='https:'; const info=[]; info.push('Origin: '+location.origin); info.push('HTTPS: '+(isHttps?'да':'нет — камера будет заблокирована'));
-    navigator.mediaDevices.enumerateDevices().then(devs=>{ const cams=devs.filter(d=>d.kind==='videoinput'); if(!cams.length){ info.push('Камеры не обнаружены или доступ запрещён'); } else { info.push('Найдено камер: '+cams.length); cams.forEach((c,i)=> info.push(`#${i} ${c.label||'камера без имени'}`)); } $('#diagInfo').textContent=info.join('
-'); }).catch(err=>{ info.push('enumerateDevices error: '+err); $('#diagInfo').textContent=info.join('
-'); }); } else { info.push('Найдено камер: '+cams.length); cams.forEach((c,i)=> info.push(`#${i} ${c.label||'камера без имени'}`)); } $('#diagInfo').textContent=info.join('
-'); }).catch(err=>{ info.push('enumerateDevices error: '+err); $('#diagInfo').textContent=info.join('
-'); }); }
+  function diag(){
+    const isHttps = location.protocol==='https:';
+    const info = [];
+    info.push('Origin: '+location.origin);
+    info.push('HTTPS: '+(isHttps?'да':'нет — камера будет заблокирована'));
+    navigator.mediaDevices.enumerateDevices()
+      .then(devs=>{
+        const cams = devs.filter(d=>d.kind==='videoinput');
+        if(!cams.length){ info.push('Камеры не обнаружены или доступ запрещён'); }
+        else {
+          info.push('Найдено камер: '+cams.length);
+          cams.forEach((c,i)=> info.push(`#${i} ${c.label || 'камера без имени'}`));
+        }
+        $('#diagInfo').textContent = info.join('
+');
+      })
+      .catch(err=>{
+        info.push('enumerateDevices error: '+err);
+        $('#diagInfo').textContent = info.join('
+');
+      });
+  }
 
-  async function stopCam(){ if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); } state.stream=null; state.track=null; state.torchOn=false; $('#scanInfo').textContent='Камера остановлена'; }
-  async function toggleTorch(){ try{ if(!state.track) return; const caps=state.track.getCapabilities?.(); if(!caps||!caps.torch){ $('#scanInfo').textContent='Фонарик не поддерживается'; return; } state.torchOn=!state.torchOn; await state.track.applyConstraints({ advanced:[{ torch:state.torchOn }] }); $('#scanInfo').textContent= state.torchOn?'Фонарик: ВКЛ':'Фонарик: ВЫКЛ'; }catch(err){ $('#scanInfo').textContent='Torch error: '+err; } }
+  async function stopCam(){
+    if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); }
+    state.stream=null; state.track=null; state.torchOn=false; $('#scanInfo').textContent='Камера остановлена';
+  }
 
-  $('#startCam').onclick = startCam; $('#stopCam').onclick = stopCam; $('#torchBtn').onclick = toggleTorch; $('#diagBtn').onclick = diag; $('#switchCamBtn').onclick = switchCamera;
+  async function toggleTorch(){
+    try{
+      if(!state.track) return;
+      const caps = state.track.getCapabilities?.();
+      if(!caps || !caps.torch){ $('#scanInfo').textContent='Фонарик не поддерживается'; return; }
+      state.torchOn=!state.torchOn;
+      await state.track.applyConstraints({ advanced:[{ torch:state.torchOn }] });
+      $('#scanInfo').textContent= state.torchOn?'Фонарик: ВКЛ':'Фонарик: ВЫКЛ';
+    }catch(err){ $('#scanInfo').textContent='Torch error: '+err; }
+  }
 
-  async function scanLoop(){ const video=$('#preview'); if(!video||!state.stream) return; try{ const res=await codeReader.decodeOnceFromVideoElement(video); if(res&&res.text){ onScan(res.text); } }catch(_){} if(state.stream) requestAnimationFrame(scanLoop); }
+  $('#startCam').onclick = startCam;
+  $('#stopCam').onclick = stopCam;
+  $('#torchBtn').onclick = toggleTorch;
+  $('#diagBtn').onclick = diag;
+  $('#switchCamBtn').onclick = switchCamera;
+
+  async function scanLoop(){
+    const video=$('#preview'); if(!video||!state.stream) return;
+    try{ const res=await codeReader.decodeOnceFromVideoElement(video); if(res&&res.text){ onScan(res.text); } }
+    catch(_){}
+    if(state.stream) requestAnimationFrame(scanLoop);
+  }
 
   function setMode(m){ state.mode=m; $('#modeLabel').textContent=(m==='put')?'Размещение':'Поиск/Отбор'; state.lastProduct=null; state.lastLocation=null; renderWork(); }
-  $('#modePut').onclick = ()=> setMode('put'); $('#modePick').onclick = ()=> setMode('pick');
+  $('#modePut').onclick = ()=> setMode('put');
+  $('#modePick').onclick = ()=> setMode('pick');
+
   function vibro(){ if(navigator.vibrate) navigator.vibrate(40); }
 
   function onScan(txt){ $('#lastScan').textContent='QR: '+txt; if(txt.startsWith('INV1|P;')) return onProductQR(txt); if(txt.startsWith('INV1|L;')) return onLocationQR(txt); vibro(); }
 
-  async function apiGet(path, params){ const url=new URL(cfg.url); url.searchParams.set('path', path); url.searchParams.set('key', cfg.key); Object.entries(params||{}).forEach(([k,v])=> url.searchParams.set(k,v)); const r=await fetch(url.toString(), {method:'GET'}); const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
-  async function apiPost(path, body){ const r=await fetch(cfg.url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path, apiKey: cfg.key, ...body })}); const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
+  async function apiGet(path, params){
+    const url=new URL(cfg.url); url.searchParams.set('path', path); url.searchParams.set('key', cfg.key);
+    Object.entries(params||{}).forEach(([k,v])=> url.searchParams.set(k,v));
+    const r=await fetch(url.toString(), {method:'GET'}); const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j;
+  }
+
+  async function apiPost(path, body){
+    const r=await fetch(cfg.url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path, apiKey: cfg.key, ...body })});
+    const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j;
+  }
 
   async function onProductQR(code){ try{ const p=await apiGet('product',{code}); state.lastProduct=p; vibro(); renderWork(); }catch(err){ $('#scanInfo').textContent='Товар не найден: '+err.message; } }
   async function onLocationQR(code){ try{ const l=await apiGet('location',{code}); state.lastLocation=l; vibro(); renderWork(); }catch(err){ $('#scanInfo').textContent='Полка не найдена: '+err.message; } }
 
-  function renderWork(){ const w=$('#workArea'); w.innerHTML=''; if(state.mode==='put'){ const p=state.lastProduct, l=state.lastLocation; const pHtml=p?`<div>SKU: <b>${p.sku}</b> — ${p.name}</div>`:'<div class="muted">Сканируй QR товара…</div>'; const lHtml=l?`<div>Полка: <b>${l.loc_code}</b></div>`:'<div class="muted">Сканируй QR полки…</div>'; w.insertAdjacentHTML('beforeend', `<div class="grid">${pHtml}${lHtml}</div>`); if(p&&l){ w.insertAdjacentHTML('beforeend', `<div style="margin-top:12px;"><label>Количество:</label> <input id="qty" type="number" step="1" value="1" style="width:120px;" /> <div class="row qtypad" style="margin-top:8px;"><button data-q="1">+1</button><button data-q="5">+5</button><button data-q="10">+10</button><button id="putBtn">Сохранить</button></div><div id="resPut" class="muted" style="margin-top:6px;"></div></div>`); w.querySelectorAll('.qtypad button[data-q]').forEach(b=> b.onclick=()=>{ const add=Number(b.getAttribute('data-q')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+add); }); w.querySelector('#putBtn').onclick=postPutaway; } } else { const p=state.lastProduct; const pHtml=p?`<div>SKU: <b>${p.sku}</b> — ${p.name}</div>`:'<div class="muted">Сканируй QR товара…</div>'; w.insertAdjacentHTML('beforeend', `<div>${pHtml}</div>`); if(p){ loadWhere(p.sku); } } }
-
-  async function postPutaway(){ const p=state.lastProduct, l=state.lastLocation; const qty=Number($('#qty').value||0); if(!p||!l||qty<=0){ $('#resPut').textContent='Проверь данные'; return; } try{ const r=await apiPost('move',{ sku:p.sku, loc_code:l.loc_code, qty_delta:qty, action:'putaway', user:'worker@local', device_id:cfg.device, op_id:crypto.randomUUID(), note:'' }); $('#resPut').innerHTML=`<span class="ok">ОК. Новый остаток на ${l.loc_code}: <b>${r.new_qty}</b></span>`; vibro(); }catch(err){ $('#resPut').innerHTML=`<span class="err">Ошибка: ${err.message}</span>`; } }
-
-  async function loadWhere(sku){ const w=$('#workArea'); const box=document.createElement('div'); box.className='card'; box.innerHTML='<div class="muted">Загружаю остатки…</div>'; w.appendChild(box); try{ const r=await apiGet('where',{sku}); if(!r.locations||!r.locations.length){ box.innerHTML='<div class="muted">Остатков нет</div>'; return; } const list=r.locations.map(x=>`<div class="row"><div style=\"min-width:160px;\">Полка: <b>${x.loc_code}</b></div><div>Остаток: <b>${x.qty}</b></div><button data-loc=\"${x.loc_code}\">Отобрать…</button></div>`).join(''); box.innerHTML=list; box.querySelectorAll('button[data-loc]').forEach(btn=> btn.onclick=()=> showPickDialog(sku, btn.getAttribute('data-loc'))); }catch(err){ box.innerHTML=`<span class="err">Ошибка: ${err.message}</span>`; } }
-
-  function showPickDialog(sku,loc){ const w=$('#workArea'); const dia=document.createElement('div'); dia.className='card'; dia.innerHTML=`<div>Отбор с <b>${loc}</b> для SKU <b>${sku}</b></div><div style=\"margin-top:8px;\"><label>Списать:</label><input id=\"qtyPick\" type=\"number\" step=\"1\" value=\"1\" style=\"width:120px;\"/><div class=\"row qtypad\" style=\"margin-top:8px;\"><button data-q=\"1\">+1</button><button data-q=\"5\">+5</button><button data-q=\"10\">+10</button><button id=\"pickBtn\">Списать</button></div><div id=\"resPick\" class=\"muted\" style=\"margin-top:6px;\"></div></div>`; w.appendChild(dia); dia.querySelectorAll('.qtypad button[data-q]').forEach(b=> b.onclick=()=>{ const add=Number(b.getAttribute('data-q')); const el=dia.querySelector('#qtyPick'); el.value=Math.max(0, Number(el.value||0)+add); }); dia.querySelector('#pickBtn').onclick=async ()=>{ const qty=Number(dia.querySelector('#qtyPick').value||0); if(qty<=0){ dia.querySelector('#resPick').textContent='Укажи количество'; return; } try{ const r=await apiPost('move',{ sku, loc_code:loc, qty_delta:-Math.abs(qty), action:'pick', user:'worker@local', device_id:cfg.device, op_id:crypto.randomUUID(), note:'' }); dia.querySelector('#resPick').innerHTML=`<span class=\"ok\">ОК. Остаток на ${loc}: <b>${r.new_qty}</b></span>`; vibro(); }catch(err){ dia.querySelector('#resPick').innerHTML=`<span class=\"err\">Ошибка: ${err.message}</span>`; } };
+  function renderWork(){
+    const w=$('#workArea'); w.innerHTML='';
+    if(state.mode==='put'){
+      const p=state.lastProduct, l=state.lastLocation;
+      const pHtml=p?`<div>SKU: <b>${p.sku}</b> — ${p.name}</div>`:'<div class="muted">Сканируй QR товара…</div>';
+      const lHtml=l?`<div>Полка: <b>${l.loc_code}</b></div>`:'<div class="muted">Сканируй QR полки…</div>';
+      w.insertAdjacentHTML('beforeend', `<div class="grid">${pHtml}${lHtml}</div>`);
+      if(p&&l){
+        w.insertAdjacentHTML('beforeend', `<div style="margin-top:12px;"><label>Количество:</label> <input id="qty" type="number" step="1" value="1" style="width:120px;" /> <div class="row qtypad" style="margin-top:8px;"><button data-q="1">+1</button><button data-q="5">+5</button><button data-q="10">+10</button><button id="putBtn">Сохранить</button></div><div id="resPut" class="muted" style="margin-top:6px;"></div></div>`);
+        w.querySelectorAll('.qtypad button[data-q]').forEach(b=> b.onclick=()=>{ const add=Number(b.getAttribute('data-q')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+add); });
+        w.querySelector('#putBtn').onclick=postPutaway;
+      }
+    } else {
+      const p=state.lastProduct;
+      const pHtml=p?`<div>SKU: <b>${p.sku}</b> — ${p.name}</div>`:'<div class="muted">Сканируй QR товара…</div>';
+      w.insertAdjacentHTML('beforeend', `<div>${pHtml}</div>`);
+      if(p){ loadWhere(p.sku); }
+    }
   }
 
-  setMode('put');
+  async function postPutaway(){
+    const p=state.lastProduct, l=state.lastLocation; const qty=Number($('#qty').value||0);
+    if(!p||!l||qty<=0){ $('#resPut').textContent='Проверь данные'; return; }
+    try{
+      const r=await apiPost('move',{ sku:p.sku, loc_code:l.loc_code, qty_delta:qty, action:'putaway', user:'worker@local', device_id:cfg.device, op_id:crypto.randomUUID(), note:'' });
+      $('#resPut').innerHTML=`<span class="ok">ОК. Новый остаток на ${l.loc_code}: <b>${r.new_qty}</b></span>`; vibro();
+    }catch(err){ $('#resPut').innerHTML=`<span class="err">Ошибка: ${err.message}</span>`; }
+  }
+
+  async function loadWhere(sku){
+    const w=$('#workArea'); const box=document.createElement('div'); box.className='card';
+    box.innerHTML='<div class="muted">Загружаю остатки…</div>'; w.appendChild(box);
+    try{
+      const r=await apiGet('where',{sku});
+      if(!r.locations||!r.locations.length){ box.innerHTML='<div class="muted">Остатков нет</div>'; return; }
+      const list=r.locations.map(x=>`<div class="row"><div style=\"min-width:160px;\">Полка: <b>${x.loc_code}</b></div><div>Остаток: <b>${x.qty}</b></div><button data-loc=\"${x.loc_code}\">Отобрать…</button></div>`).join('');
+      box.innerHTML=list;
+      box.querySelectorAll('button[data-loc]').forEach(btn=> btn.onclick=()=> showPickDialog(sku, btn.getAttribute('data-loc')));
+    }catch(err){ box.innerHTML=`<span class="err">Ошибка: ${err.message}</span>`; }
+  }
+
+  function showPickDialog(sku,loc){
+    const w=$('#workArea'); const dia=document.createElement('div'); dia.className='card';
+    dia.innerHTML=`<div>Отбор с <b>${loc}</b> для SKU <b>${sku}</b></div><div style=\"margin-top:8px;\"><label>Списать:</label><input id=\"qtyPick\" type=\"number\" step=\"1\" value=\"1\" style=\"width:120px;\"/><div class=\"row qtypad\" style=\"margin-top:8px;\"><button data-q=\"1\">+1</button><button data-q=\"5\">+5</button><button data-q=\"10\">+10</button><button id=\"pickBtn\">Списать</button></div><div id=\"resPick\" class=\"muted\" style=\"margin-top:6px;\"></div></div>`;
+    w.appendChild(dia);
+    dia.querySelectorAll('.qtypad button[data-q]').forEach(b=> b.onclick=()=>{ const add=Number(b.getAttribute('data-q')); const el=dia.querySelector('#qtyPick'); el.value=Math.max(0, Number(el.value||0)+add); });
+    dia.querySelector('#pickBtn').onclick=async ()=>{
+      const qty=Number(dia.querySelector('#qtyPick').value||0);
+      if(qty<=0){ dia.querySelector('#resPick').textContent='Укажи количество'; return; }
+      try{
+        const r=await apiPost('move',{ sku, loc_code:loc, qty_delta:-Math.abs(qty), action:'pick', user:'worker@local', device_id:cfg.device, op_id:crypto.randomUUID(), note:'' });
+        dia.querySelector('#resPick').innerHTML=`<span class=\"ok\">ОК. Остаток на ${loc}: <b>${r.new_qty}</b></span>`; vibro();
+      }catch(err){ dia.querySelector('#resPick').innerHTML=`<span class=\"err\">Ошибка: ${err.message}</span>`; }
+    };
+  }
+
+  // Стартовый режим
+  function setModeInitial(){ setMode('put'); }
+  setModeInitial();
   </script>
 </body>
 </html>
