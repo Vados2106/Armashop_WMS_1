@@ -122,6 +122,8 @@
   function diag(){ const isHttps = location.protocol==='https:'; const info=[]; info.push('Origin: '+location.origin); info.push('HTTPS: '+(isHttps?'да':'нет — камера будет заблокирована'));
     navigator.mediaDevices.enumerateDevices().then(devs=>{ const cams=devs.filter(d=>d.kind==='videoinput'); if(!cams.length){ info.push('Камеры не обнаружены или доступ запрещён'); } else { info.push('Найдено камер: '+cams.length); cams.forEach((c,i)=> info.push(`#${i} ${c.label||'камера без имени'}`)); } $('#diagInfo').textContent=info.join('
 '); }).catch(err=>{ info.push('enumerateDevices error: '+err); $('#diagInfo').textContent=info.join('
+'); }); } else { info.push('Найдено камер: '+cams.length); cams.forEach((c,i)=> info.push(`#${i} ${c.label||'камера без имени'}`)); } $('#diagInfo').textContent=info.join('
+'); }).catch(err=>{ info.push('enumerateDevices error: '+err); $('#diagInfo').textContent=info.join('
 '); }); }
 
   async function stopCam(){ if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); } state.stream=null; state.track=null; state.torchOn=false; $('#scanInfo').textContent='Камера остановлена'; }
