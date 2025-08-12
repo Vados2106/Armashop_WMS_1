@@ -109,9 +109,17 @@ function loadCfg(){ $('#apiUrl').value=cfg.url; $('#apiKey').value=cfg.key; $('#
 $('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=>$('#cfgStatus').textContent='',1200); };
 
 async function apiPost(path, body){
-  const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,apiKey:cfg.key,...body})});
-  const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j;
+  const r = await fetch(cfg.url, {
+    method: 'POST',
+    // ВАЖНО: text/plain → simple request, без OPTIONS
+    headers: {'Content-Type': 'text/plain'},
+    body: JSON.stringify({ path, apiKey: cfg.key, ...body })
+  });
+  const j = await r.json().catch(()=>({error:'Bad JSON'}));
+  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
 }
+
 
 /* ===== камера ===== */
 async function stopCam(){ try{ if(stream){stream.getTracks().forEach(t=>t.stop());} }catch(_){}
