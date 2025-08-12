@@ -1,39 +1,37 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WMS Scanner MVP — v1.2 Hotfix</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>WMS Scanner — MVP v1.3 diag</title>
   <style>
-    body{ font-family: system-ui, Arial, sans-serif; margin:0; padding:16px; }
-    .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-    .card{ border:1px solid #ddd; border-radius:12px; padding:16px; margin:12px 0; box-shadow:0 2px 10px rgba(0,0,0,.05); }
-    .big{ font-size:28px; font-weight:700; }
-    button{ padding:10px 14px; border-radius:10px; border:1px solid #ccc; cursor:pointer; }
-    input, select{ padding:10px; border-radius:10px; border:1px solid #ccc; }
-    video{ width:100%; border-radius:12px; background:#000; }
-    .muted{ color:#666; }
-    .ok{ color:#0a8; }
-    .err{ color:#c33; }
-    .qtypad button{ min-width:60px; font-size:18px; }
-    .grid{ display:grid; grid-template-columns:1fr auto; gap:8px; }
-    .badge{ display:inline-block; background:#eef; border:1px solid #ccd; border-radius:8px; padding:4px 8px; }
+    body{font-family:system-ui,Arial,sans-serif;margin:0;padding:16px;}
+    .badge{display:inline-block;background:#111;color:#fff;border-radius:12px;padding:6px 10px;margin-bottom:8px;}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 2px 10px rgba(0,0,0,.05);}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #ccc;cursor:pointer;}
+    input{padding:10px;border-radius:10px;border:1px solid #ccc;}
+    video{width:100%;border-radius:12px;background:#000;}
+    .muted{color:#666;}
+    .ok{color:#0a8;}
+    .err{color:#c33;}
+    #log{white-space:pre-wrap;background:#fafafa;border:1px dashed #ccc;border-radius:10px;padding:10px;max-height:260px;overflow:auto;}
   </style>
 </head>
 <body>
-  <h2>📦 WMS Scanner — MVP <span class="badge">v1.2 hotfix</span></h2>
-  <div class="muted">Если видишь эту строчку — JS загрузился 👍</div>
+  <div class="badge">v1.3 diag</div>
+  <div class="muted">Если видишь это — JS загрузился 👍</div>
 
   <div class="card">
     <div class="row">
       <label>API URL:</label>
-      <input id="apiUrl" value="https://script.google.com/macros/s/AKfycbzRi65nCYMc8uqQAW1ujUtzEpg9SIsRfsKebnSy9TzfqJQIVnPBHECXw4V1LUGxzzclgA/exec" size="50" />
+      <input id="apiUrl" value="https://script.google.com/macros/s/AKfycbzRi65nCYMc8uqQAW1ujUtzEpg9SIsRfsKebnSy9TzfqJQIVnPBHECXw4V1LUGxzzclgA/exec" size="50"/>
     </div>
     <div class="row" style="margin-top:8px;">
       <label>API Key:</label>
-      <input id="apiKey" value="Sklad_1507" size="30" />
+      <input id="apiKey" value="Sklad_1507" size="20"/>
       <label>Device ID:</label>
-      <input id="deviceId" value="android-01" size="20" />
+      <input id="deviceId" value="android-01" size="14"/>
       <button id="saveCfg">Сохранить</button>
       <span id="cfgStatus" class="muted"></span>
     </div>
@@ -43,7 +41,7 @@
     <div class="row">
       <button id="modePut">Размещение</button>
       <button id="modePick">Поиск/Отбор</button>
-      <span id="modeLabel" class="big">Размещение</span>
+      <span id="modeLabel" style="font-size:28px;font-weight:700;">Размещение</span>
     </div>
   </div>
 
@@ -55,20 +53,27 @@
       <button id="torchBtn">Фонарик</button>
       <button id="diagBtn">Диагностика камеры</button>
       <button id="switchCamBtn">Пробовать другую камеру</button>
-      <span id="scanInfo" class="muted"></span>
+      <button id="testClicks">Проверка кнопок</button>
     </div>
-    <pre id="diagInfo" class="muted" style="white-space:pre-wrap;margin-top:6px;"></pre>
-    <div id="lastScan" class="muted" style="margin-top:8px;"></div>
+    <div id="scanInfo" class="muted" style="margin-top:6px;"></div>
   </div>
 
   <div class="card" id="workArea"></div>
 
+  <div class="card">
+    <div style="font-weight:700;">Лог</div>
+    <div id="log" class="muted"></div>
+  </div>
+
   <script src="https://unpkg.com/@zxing/browser@0.1.5/umd/index.min.js"></script>
   <script>
-  const $ = s=>document.querySelector(s);
-  const state = { mode:'put', lastProduct:null, lastLocation:null, stream:null, track:null, torchOn:false };
+  // ===== Утилиты логирования =====
+  const logBox = document.getElementById('log');
+  function log(msg){ const time = new Date().toLocaleTimeString('ru-RU'); logBox.textContent += '['+time+'] '+msg+'\n'; logBox.scrollTop = logBox.scrollHeight; }
+  window.onerror = function(msg, src, line, col, err){ log('JS error: '+msg+' @'+line+':'+col); if(err && err.stack){ log(String(err.stack)); } };
 
-  // Значения по умолчанию — уже с твоими данными
+  const $ = s => document.querySelector(s);
+  const state = { mode:'put', stream:null, track:null, torch:false, devices:[], idx:-1, lastProduct:null, lastLocation:null };
   const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzRi65nCYMc8uqQAW1ujUtzEpg9SIsRfsKebnSy9TzfqJQIVnPBHECXw4V1LUGxzzclgA/exec';
   const DEFAULT_API_KEY = 'Sklad_1507';
   const DEFAULT_DEVICE = 'android-01';
@@ -79,103 +84,151 @@
     get key(){ return localStorage.getItem('apiKey') || DEFAULT_API_KEY; },
     set key(v){ localStorage.setItem('apiKey', v); },
     get device(){ return localStorage.getItem('deviceId') || DEFAULT_DEVICE; },
-    set device(v){ localStorage.setItem('deviceId', v); },
+    set device(v){ localStorage.setItem('deviceId', v); }
   };
 
-  function loadCfg(){ $('#apiUrl').value=cfg.url; $('#apiKey').value=cfg.key; $('#deviceId').value=cfg.device; }
-  $('#saveCfg').onclick = ()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=> $('#cfgStatus').textContent='', 1500); };
-  loadCfg();
+  function loadCfg(){
+    $('#apiUrl').value = cfg.url;
+    $('#apiKey').value = cfg.key;
+    $('#deviceId').value = cfg.device;
+    log('Конфиг загружен.');
+  }
 
-  // ZXing
+  $('#saveCfg').onclick = () => {
+    cfg.url = $('#apiUrl').value.trim();
+    cfg.key = $('#apiKey').value.trim();
+    cfg.device = $('#deviceId').value.trim();
+    $('#cfgStatus').textContent = 'Сохранено';
+    setTimeout(()=> $('#cfgStatus').textContent='', 1200);
+    log('Конфиг сохранён.');
+  };
+
+  // ===== Диагностика кнопок =====
+  $('#testClicks').onclick = () => {
+    log('Тест: клики работают ✅');
+    $('#scanInfo').textContent = 'Тест кликов: ОК';
+    alert('Клики работают 👍');
+  };
+
+  // ===== Камера / ZXing =====
   const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
-  let deviceList = []; let currentDeviceIndex = -1;
 
-  async function startCam(){
-    await stopCam();
+  async function stopCam(){
     try{
-      const res = await navigator.mediaDevices.getUserMedia({ video: { facingMode:{ ideal:'environment' } } });
-      await attachStream(res, 'Камера запущена (environment)');
-    }catch(err){ $('#scanInfo').textContent='Не удалось environment: '+err.name; await startCamFallback(); }
-  }
-
-  async function startCamFallback(){
-    const cams = await listCameras();
-    if(!cams.length){ $('#scanInfo').textContent='Камеры не найдены (HTTPS/разрешения)'; return; }
-    currentDeviceIndex = 0; await startByDeviceIndex(currentDeviceIndex);
-  }
-
-  async function attachStream(res, msg){
-    state.stream = res; const video=$('#preview'); video.srcObject=res; await video.play(); state.track=res.getVideoTracks()[0];
-    $('#scanInfo').textContent = msg; scanLoop();
+      if(state.stream){ state.stream.getTracks().forEach(t => t.stop()); }
+      state.stream = null; state.track = null; state.torch = false;
+      $('#scanInfo').textContent = 'Камера остановлена';
+      log('Камера остановлена.');
+    }catch(e){ log('stopCam error: '+e); }
   }
 
   async function listCameras(){
     try{
-      if(!state.stream){ // иногда список камер не даёт без первичного запроса
-        const tmp = await navigator.mediaDevices.getUserMedia({ video:true });
-        tmp.getTracks().forEach(t=>t.stop());
+      // Чтобы enumerateDevices вернул метки — нужен хотя бы раз getUserMedia
+      if(!state.stream){
+        try{
+          const tmp = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+          tmp.getTracks().forEach(t=>t.stop());
+        }catch(e){ /* игнор, просто чтобы спросить разрешение */ }
       }
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      deviceList = devices.filter(d=>d.kind==='videoinput');
-      return deviceList;
-    }catch(err){ $('#diagInfo').textContent='enumerateDevices error: '+err; return []; }
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      state.devices = devs.filter(d => d.kind === 'videoinput');
+      log('Камер найдено: '+state.devices.length);
+      return state.devices;
+    }catch(e){
+      log('enumerateDevices error: '+e.name+' '+e.message);
+      return [];
+    }
+  }
+
+  async function startByFacing(){
+    await stopCam();
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:'environment' } }, audio:false });
+      state.stream = stream;
+      const video = $('#preview'); video.srcObject = stream; await video.play();
+      state.track = stream.getVideoTracks()[0];
+      $('#scanInfo').textContent = 'Камера: environment';
+      log('Камера запущена (environment).');
+      scanLoop();
+      return true;
+    }catch(e){
+      log('getUserMedia environment error: '+e.name+' '+e.message);
+      return false;
+    }
   }
 
   async function startByDeviceIndex(i){
     await stopCam();
-    if(!deviceList.length){ await listCameras(); }
-    if(!deviceList.length){ $('#scanInfo').textContent='Нет камер'; return; }
-    const dev = deviceList[i % deviceList.length];
+    const dev = state.devices[i % state.devices.length];
     try{
-      const res = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: dev.deviceId } } });
-      await attachStream(res, 'Камера: '+(dev.label||'без имени'));
-    }catch(err){ $('#scanInfo').textContent='Старт по deviceId не удался: '+err.name; }
+      const stream = await navigator.mediaDevices.getUserMedia({ video:{ deviceId:{ exact: dev.deviceId } }, audio:false });
+      state.stream = stream;
+      const video = $('#preview'); video.srcObject = stream; await video.play();
+      state.track = stream.getVideoTracks()[0];
+      state.idx = i;
+      $('#scanInfo').textContent = 'Камера: '+(dev.label || 'без имени');
+      log('Камера запущена по deviceId: '+(dev.label || dev.deviceId));
+      scanLoop();
+    }catch(e){
+      log('getUserMedia by deviceId error: '+e.name+' '+e.message);
+      $('#scanInfo').textContent = 'Ошибка старта камеры: '+e.name;
+    }
+  }
+
+  async function startCam(){
+    log('Нажатие: Старт камеры.');
+    const ok = await startByFacing();
+    if(ok) return;
+    const cams = await listCameras();
+    if(!cams.length){
+      $('#scanInfo').textContent = 'Камеры не найдены или доступ запрещён';
+      log('Нет камер или нет разрешения.');
+      return;
+    }
+    await startByDeviceIndex(0);
   }
 
   async function switchCamera(){
-    if(!deviceList.length){ await listCameras(); }
-    if(!deviceList.length){ $('#scanInfo').textContent='Нет камер для переключения'; return; }
-    currentDeviceIndex=(currentDeviceIndex+1)%deviceList.length;
-    await startByDeviceIndex(currentDeviceIndex);
-  }
-
-  function diag(){
-    const isHttps = location.protocol==='https:';
-    const info = [];
-    info.push('Origin: '+location.origin);
-    info.push('HTTPS: '+(isHttps?'да':'нет — камера будет заблокирована'));
-    navigator.mediaDevices.enumerateDevices()
-      .then(devs=>{
-        const cams = devs.filter(d=>d.kind==='videoinput');
-        if(!cams.length){ info.push('Камеры не обнаружены или доступ запрещён'); }
-        else {
-          info.push('Найдено камер: '+cams.length);
-          cams.forEach((c,i)=> info.push(`#${i} ${c.label || 'камера без имени'}`));
-        }
-        $('#diagInfo').textContent = info.join('
-');
-      })
-      .catch(err=>{
-        info.push('enumerateDevices error: '+err);
-        $('#diagInfo').textContent = info.join('
-');
-      });
-  }
-
-  async function stopCam(){
-    if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); }
-    state.stream=null; state.track=null; state.torchOn=false; $('#scanInfo').textContent='Камера остановлена';
+    log('Нажатие: Переключить камеру.');
+    const cams = await listCameras();
+    if(!cams.length){ $('#scanInfo').textContent='Нет камер для переключения'; return; }
+    state.idx = (state.idx + 1) % cams.length;
+    await startByDeviceIndex(state.idx);
   }
 
   async function toggleTorch(){
+    log('Нажатие: Фонарик.');
+    if(!state.track){ $('#scanInfo').textContent='Сначала запусти камеру'; return; }
     try{
-      if(!state.track) return;
-      const caps = state.track.getCapabilities?.();
-      if(!caps || !caps.torch){ $('#scanInfo').textContent='Фонарик не поддерживается'; return; }
-      state.torchOn=!state.torchOn;
-      await state.track.applyConstraints({ advanced:[{ torch:state.torchOn }] });
-      $('#scanInfo').textContent= state.torchOn?'Фонарик: ВКЛ':'Фонарик: ВЫКЛ';
-    }catch(err){ $('#scanInfo').textContent='Torch error: '+err; }
+      const caps = state.track.getCapabilities ? state.track.getCapabilities() : null;
+      if(!caps || !caps.torch){ $('#scanInfo').textContent='Фонарик не поддерживается'; log('Torch not supported.'); return; }
+      state.torch = !state.torch;
+      await state.track.applyConstraints({ advanced:[{ torch: state.torch }] });
+      $('#scanInfo').textContent = state.torch ? 'Фонарик: ВКЛ' : 'Фонарик: ВЫКЛ';
+      log('Torch '+(state.torch?'ON':'OFF')+'.');
+    }catch(e){
+      log('Torch error: '+e.name+' '+e.message);
+      $('#scanInfo').textContent = 'Torch error: '+e.name;
+    }
+  }
+
+  async function diag(){
+    log('Нажатие: Диагностика.');
+    const arr = [];
+    const isHttps = location.protocol === 'https:';
+    arr.push('Origin: '+location.origin);
+    arr.push('HTTPS: '+(isHttps?'да':'нет — камера будет заблокирована'));
+    try{
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const cams = devs.filter(d => d.kind === 'videoinput');
+      arr.push('Найдено камер: '+cams.length);
+      cams.forEach((c,i)=> arr.push('#'+i+' '+(c.label || 'камера без имени')));
+    }catch(e){
+      arr.push('enumerateDevices error: '+e.name+' '+e.message);
+    }
+    $('#scanInfo').textContent = arr.join(' | ');
+    log(arr.join(' | '));
   }
 
   $('#startCam').onclick = startCam;
@@ -184,94 +237,39 @@
   $('#diagBtn').onclick = diag;
   $('#switchCamBtn').onclick = switchCamera;
 
+  // ===== Скан-цикл =====
   async function scanLoop(){
-    const video=$('#preview'); if(!video||!state.stream) return;
-    try{ const res=await codeReader.decodeOnceFromVideoElement(video); if(res&&res.text){ onScan(res.text); } }
-    catch(_){}
+    const video = $('#preview');
+    if(!video || !state.stream) return;
+    try{
+      const res = await codeReader.decodeOnceFromVideoElement(video);
+      if(res && res.text){
+        log('QR: '+res.text);
+        $('#scanInfo').textContent = 'QR: '+res.text;
+        if(navigator.vibrate) navigator.vibrate(40);
+      }
+    }catch(_e){
+      // ignore — цикл ждёт следующий кадр
+    }
     if(state.stream) requestAnimationFrame(scanLoop);
   }
 
-  function setMode(m){ state.mode=m; $('#modeLabel').textContent=(m==='put')?'Размещение':'Поиск/Отбор'; state.lastProduct=null; state.lastLocation=null; renderWork(); }
+  // ===== Режимы и рабочая область (минимум для теста) =====
+  function setMode(m){
+    state.mode = m;
+    $('#modeLabel').textContent = (m === 'put') ? 'Размещение' : 'Поиск/Отбор';
+    $('#workArea').innerHTML = (m === 'put')
+      ? '<div class="muted">Сканируй QR товара, потом QR полки и введи количество…</div>'
+      : '<div class="muted">Сканируй QR товара, дальше покажу полки и остатки…</div>';
+    log('Режим: '+m);
+  }
   $('#modePut').onclick = ()=> setMode('put');
   $('#modePick').onclick = ()=> setMode('pick');
 
-  function vibro(){ if(navigator.vibrate) navigator.vibrate(40); }
-
-  function onScan(txt){ $('#lastScan').textContent='QR: '+txt; if(txt.startsWith('INV1|P;')) return onProductQR(txt); if(txt.startsWith('INV1|L;')) return onLocationQR(txt); vibro(); }
-
-  async function apiGet(path, params){
-    const url=new URL(cfg.url); url.searchParams.set('path', path); url.searchParams.set('key', cfg.key);
-    Object.entries(params||{}).forEach(([k,v])=> url.searchParams.set(k,v));
-    const r=await fetch(url.toString(), {method:'GET'}); const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j;
-  }
-
-  async function apiPost(path, body){
-    const r=await fetch(cfg.url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ path, apiKey: cfg.key, ...body })});
-    const j=await r.json(); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j;
-  }
-
-  async function onProductQR(code){ try{ const p=await apiGet('product',{code}); state.lastProduct=p; vibro(); renderWork(); }catch(err){ $('#scanInfo').textContent='Товар не найден: '+err.message; } }
-  async function onLocationQR(code){ try{ const l=await apiGet('location',{code}); state.lastLocation=l; vibro(); renderWork(); }catch(err){ $('#scanInfo').textContent='Полка не найдена: '+err.message; } }
-
-  function renderWork(){
-    const w=$('#workArea'); w.innerHTML='';
-    if(state.mode==='put'){
-      const p=state.lastProduct, l=state.lastLocation;
-      const pHtml=p?`<div>SKU: <b>${p.sku}</b> — ${p.name}</div>`:'<div class="muted">Сканируй QR товара…</div>';
-      const lHtml=l?`<div>Полка: <b>${l.loc_code}</b></div>`:'<div class="muted">Сканируй QR полки…</div>';
-      w.insertAdjacentHTML('beforeend', `<div class="grid">${pHtml}${lHtml}</div>`);
-      if(p&&l){
-        w.insertAdjacentHTML('beforeend', `<div style="margin-top:12px;"><label>Количество:</label> <input id="qty" type="number" step="1" value="1" style="width:120px;" /> <div class="row qtypad" style="margin-top:8px;"><button data-q="1">+1</button><button data-q="5">+5</button><button data-q="10">+10</button><button id="putBtn">Сохранить</button></div><div id="resPut" class="muted" style="margin-top:6px;"></div></div>`);
-        w.querySelectorAll('.qtypad button[data-q]').forEach(b=> b.onclick=()=>{ const add=Number(b.getAttribute('data-q')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+add); });
-        w.querySelector('#putBtn').onclick=postPutaway;
-      }
-    } else {
-      const p=state.lastProduct;
-      const pHtml=p?`<div>SKU: <b>${p.sku}</b> — ${p.name}</div>`:'<div class="muted">Сканируй QR товара…</div>';
-      w.insertAdjacentHTML('beforeend', `<div>${pHtml}</div>`);
-      if(p){ loadWhere(p.sku); }
-    }
-  }
-
-  async function postPutaway(){
-    const p=state.lastProduct, l=state.lastLocation; const qty=Number($('#qty').value||0);
-    if(!p||!l||qty<=0){ $('#resPut').textContent='Проверь данные'; return; }
-    try{
-      const r=await apiPost('move',{ sku:p.sku, loc_code:l.loc_code, qty_delta:qty, action:'putaway', user:'worker@local', device_id:cfg.device, op_id:crypto.randomUUID(), note:'' });
-      $('#resPut').innerHTML=`<span class="ok">ОК. Новый остаток на ${l.loc_code}: <b>${r.new_qty}</b></span>`; vibro();
-    }catch(err){ $('#resPut').innerHTML=`<span class="err">Ошибка: ${err.message}</span>`; }
-  }
-
-  async function loadWhere(sku){
-    const w=$('#workArea'); const box=document.createElement('div'); box.className='card';
-    box.innerHTML='<div class="muted">Загружаю остатки…</div>'; w.appendChild(box);
-    try{
-      const r=await apiGet('where',{sku});
-      if(!r.locations||!r.locations.length){ box.innerHTML='<div class="muted">Остатков нет</div>'; return; }
-      const list=r.locations.map(x=>`<div class="row"><div style=\"min-width:160px;\">Полка: <b>${x.loc_code}</b></div><div>Остаток: <b>${x.qty}</b></div><button data-loc=\"${x.loc_code}\">Отобрать…</button></div>`).join('');
-      box.innerHTML=list;
-      box.querySelectorAll('button[data-loc]').forEach(btn=> btn.onclick=()=> showPickDialog(sku, btn.getAttribute('data-loc')));
-    }catch(err){ box.innerHTML=`<span class="err">Ошибка: ${err.message}</span>`; }
-  }
-
-  function showPickDialog(sku,loc){
-    const w=$('#workArea'); const dia=document.createElement('div'); dia.className='card';
-    dia.innerHTML=`<div>Отбор с <b>${loc}</b> для SKU <b>${sku}</b></div><div style=\"margin-top:8px;\"><label>Списать:</label><input id=\"qtyPick\" type=\"number\" step=\"1\" value=\"1\" style=\"width:120px;\"/><div class=\"row qtypad\" style=\"margin-top:8px;\"><button data-q=\"1\">+1</button><button data-q=\"5\">+5</button><button data-q=\"10\">+10</button><button id=\"pickBtn\">Списать</button></div><div id=\"resPick\" class=\"muted\" style=\"margin-top:6px;\"></div></div>`;
-    w.appendChild(dia);
-    dia.querySelectorAll('.qtypad button[data-q]').forEach(b=> b.onclick=()=>{ const add=Number(b.getAttribute('data-q')); const el=dia.querySelector('#qtyPick'); el.value=Math.max(0, Number(el.value||0)+add); });
-    dia.querySelector('#pickBtn').onclick=async ()=>{
-      const qty=Number(dia.querySelector('#qtyPick').value||0);
-      if(qty<=0){ dia.querySelector('#resPick').textContent='Укажи количество'; return; }
-      try{
-        const r=await apiPost('move',{ sku, loc_code:loc, qty_delta:-Math.abs(qty), action:'pick', user:'worker@local', device_id:cfg.device, op_id:crypto.randomUUID(), note:'' });
-        dia.querySelector('#resPick').innerHTML=`<span class=\"ok\">ОК. Остаток на ${loc}: <b>${r.new_qty}</b></span>`; vibro();
-      }catch(err){ dia.querySelector('#resPick').innerHTML=`<span class=\"err\">Ошибка: ${err.message}</span>`; }
-    };
-  }
-
-  // Стартовый режим
-  function setModeInitial(){ setMode('put'); }
-  setModeInitial();
+  // ===== Инициализация =====
+  loadCfg();
+  setMode('put');
+  log('Готово. Жми "Проверка кнопок" → "Диагностика камеры" → "Старт камеры".');
   </script>
 </body>
 </html>
