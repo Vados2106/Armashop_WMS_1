@@ -1,120 +1,105 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <title>WMS Scanner</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    body {
-      font-family: sans-serif;
-      padding: 1rem;
-      max-width: 400px;
-      margin: auto;
-    }
-    input, button {
-      font-size: 1.2rem;
-      width: 100%;
-      margin: 0.5rem 0;
-      padding: 0.5rem;
-    }
-    #status {
-      margin-top: 1rem;
-      font-weight: bold;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>WMS Scan App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        input, button { font-size: 1.2em; margin: 5px 0; width: 100%; padding: 10px; }
+        .log { white-space: pre-wrap; background: #f0f0f0; padding: 10px; margin-top: 10px; border-radius: 5px; }
+    </style>
 </head>
 <body>
-  <h2>📦 Сканирование</h2>
+    <h1>WMS: сканирование и движение</h1>
 
-  <label>QR товара:</label>
-  <input id="product" placeholder="Сканируй товар" />
+    <label>QR товара:</label>
+    <input type="text" id="productQR" placeholder="Сканируй QR товара">
 
-  <label>QR полки:</label>
-  <input id="location" placeholder="Сканируй полку" />
+    <label>QR полки:</label>
+    <input type="text" id="locationQR" placeholder="Сканируй QR полки">
 
-  <label>Количество:</label>
-  <input id="qty" type="number" placeholder="Напр. 5 или -2" />
+    <label>Количество:</label>
+    <input type="number" id="qty" placeholder="Введите количество" value="1">
 
-  <label>Оператор:</label>
-  <input id="user" placeholder="Например Влад" />
+    <label>Имя пользователя:</label>
+    <input type="text" id="userName" placeholder="Кто выполняет операцию">
 
-  <button onclick="sendMove('putaway')">➕ Пополнение</button>
-  <button onclick="sendMove('pick')">➖ Списание</button>
+    <label>ID устройства:</label>
+    <input type="text" id="deviceId" placeholder="Уникальный ID устройства" value="test-device">
 
-  <hr />
-  <button onclick="insertTest('product')">🔍 Вставить тестовый товар</button>
-  <button onclick="insertTest('location')">📍 Вставить тестовую полку</button>
+    <label>Комментарий:</label>
+    <input type="text" id="note" placeholder="Комментарий (необязательно)">
 
-  <div id="status"></div>
+    <button onclick="move('putaway')">📦 Пополнение</button>
+    <button onclick="move('pick')">📤 Списание</button>
 
-  <script>
-    const API_URL = "https://bf1ea7d4a0c5.ngrok-free.app";
-    const API_KEY = "supersecret123";
+    <div class="log" id="log">Готово к сканированию...</div>
 
-    function insertTest(type) {
-      const testQRs = {
-        product: "INV1|P;SKU=TEST123",
-        location: "INV1|L;LOC=A-01",
-      };
-      document.getElementById(type).value = testQRs[type];
-    }
+    <script>
+        const API_KEY = "supersecret123";
+        const API_URL = "https://bf1ea7d4a0c5.ngrok-free.app";
 
-    async function sendMove(action) {
-      const product = document.getElementById("product").value.trim();
-      const location = document.getElementById("location").value.trim();
-      const qty = parseInt(document.getElementById("qty").value);
-      const user = document.getElementById("user").value.trim();
-      const opId = "op_" + Date.now();
+        function log(msg) {
+            document.getElementById("log").textContent = msg;
+        }
 
-      if (!product || !location || !qty || !user) {
-        return show("⚠️ Все поля обязательны");
-      }
+        async function move(action) {
+            const skuQR = document.getElementById("productQR").value.trim();
+            const locQR = document.getElementById("locationQR").value.trim();
+            const qty = parseInt(document.getElementById("qty").value, 10);
+            const user = document.getElementById("userName").value.trim();
+            const device = document.getElementById("deviceId").value.trim();
+            const note = document.getElementById("note").value.trim();
+            const op_id = "op_" + Date.now();
 
-      const payload = {
-        sku: extractSKU(product),
-        loc_code: extractLOC(location),
-        qty_delta: action === "putaway" ? Math.abs(qty) : -Math.abs(qty),
-        action,
-        device_id: "test-device",
-        user_name: user,
-        op_id: opId,
-        note: ""
-      };
+            if (!skuQR || !locQR || isNaN(qty)) {
+                log("❌ Заполни все поля");
+                return;
+            }
 
-      try {
-        const res = await fetch(API_URL + "/move", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": API_KEY,
-          },
-          body: JSON.stringify(payload)
-        });
+            try {
+                const skuRes = await fetch(`${API_URL}/product?code=${encodeURIComponent(skuQR)}`, {
+                    headers: { "X-API-Key": API_KEY }
+                });
+                const skuJson = await skuRes.json();
+                const locRes = await fetch(`${API_URL}/location?code=${encodeURIComponent(locQR)}`, {
+                    headers: { "X-API-Key": API_KEY }
+                });
+                const locJson = await locRes.json();
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "Ошибка");
+                const payload = {
+                    sku: skuJson.sku,
+                    loc_code: locJson.loc_code,
+                    qty_delta: action === "putaway" ? qty : -qty,
+                    action,
+                    device_id: device,
+                    user_name: user,
+                    op_id,
+                    note
+                };
 
-        show(`✅ Готово: ${data.sku} @ ${data.loc_code}, теперь ${data.new_qty}шт`);
-      } catch (err) {
-        show("❌ " + err.message);
-      }
-    }
+                const moveRes = await fetch(`${API_URL}/move`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-API-Key": API_KEY
+                    },
+                    body: JSON.stringify(payload)
+                });
 
-    function extractSKU(code) {
-      const match = code.match(/^INV1\|P;SKU=([A-Za-z0-9_.\-]+)$/);
-      if (!match) throw new Error("QR товара недействителен");
-      return match[1];
-    }
-
-    function extractLOC(code) {
-      const match = code.match(/^INV1\|L;LOC=([A-Za-z0-9_.\-]+)$/);
-      if (!match) throw new Error("QR полки недействителен");
-      return match[1];
-    }
-
-    function show(msg) {
-      document.getElementById("status").textContent = msg;
-    }
-  </script>
+                const result = await moveRes.json();
+                if (moveRes.ok) {
+                    log(`✅ Готово: ${action === "putaway" ? "добавлено" : "списано"} ${qty} шт.
+Остаток: ${result.new_qty}`);
+                } else {
+                    log(`❌ Ошибка: ${result.detail || "неизвестно"}`);
+                }
+            } catch (err) {
+                log("❌ Ошибка запроса: " + err.message);
+            }
+        }
+    </script>
 </body>
 </html>
