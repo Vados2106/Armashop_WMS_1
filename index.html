@@ -1,324 +1,120 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>WMS Scanner — v1.8.4 LIVE (FastAPI)</title>
+  <meta charset="UTF-8" />
+  <title>WMS Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    body{font-family:system-ui,Arial,sans-serif;margin:0;padding:16px;}
-    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0;}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
-    button{padding:10px 14px;border:1px solid #ccc;border-radius:10px;cursor:pointer;}
-    input{padding:10px;border:1px solid #ccc;border-radius:10px;}
-    video{width:100%;background:#000;border-radius:12px;}
-    .muted{color:#666;}
-    .ok{color:#0a8;}
-    .err{color:#c33;}
-    #log{white-space:pre-wrap;background:#fafafa;border:1px dashed #ccc;border-radius:10px;padding:10px;max-height:260px;overflow:auto;}
-    .kv{display:grid;grid-template-columns:160px 1fr;gap:6px 10px;align-items:center;}
-    .badge{display:inline-block;background:#eef;border:1px solid #ccd;border-radius:10px;padding:6px 10px;margin-right:8px;}
+    body {
+      font-family: sans-serif;
+      padding: 1rem;
+      max-width: 400px;
+      margin: auto;
+    }
+    input, button {
+      font-size: 1.2rem;
+      width: 100%;
+      margin: 0.5rem 0;
+      padding: 0.5rem;
+    }
+    #status {
+      margin-top: 1rem;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <h3>📦 WMS Scanner — <span class="badge">v1.8.4 LIVE</span>
-    <span id="jsLive" class="ok" style="display:none;">JS загружен ✅</span>
-  </h3>
-  <div class="muted">Порядок: Старт камеры → Товар → Полка → Количество → Размещение.</div>
+  <h2>📦 Сканирование</h2>
 
-  <!-- Конфиг -->
-  <div class="card">
-    <div class="row">
-      <label>API URL:</label>
-      <input id="apiUrl" value="http://192.168.0.111" size="50"/>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <label>API Key:</label>
-      <input id="apiKey" value="supersecret123" size="20"/>
-      <label>Device ID:</label>
-      <input id="deviceId" value="android-01" size="14"/>
-      <button id="saveCfg">Сохранить</button>
-      <button id="btnSelftest">Проверка кнопок</button>
-      <button id="btnPing">Пинг API</button>
-      <span id="cfgStatus" class="muted"></span>
-    </div>
-  </div>
+  <label>QR товара:</label>
+  <input id="product" placeholder="Сканируй товар" />
 
-  <!-- Камера -->
-  <div class="card">
-    <div class="row">
-      <button id="startCam">Старт камеры (640×480@15)</button>
-      <button id="stopCam">Стоп</button>
-      <button id="switchCam">Другая камера</button>
-      <span id="camStatus" class="muted"></span>
-    </div>
-    <video id="preview" playsinline></video>
-  </div>
+  <label>QR полки:</label>
+  <input id="location" placeholder="Сканируй полку" />
 
-  <!-- Пошаговый процесс -->
-  <div class="card">
-    <div class="row">
-      <button id="scanProduct">Сканировать товар</button>
-      <button id="scanLocation">Сканировать полку</button>
-      <button id="resetFlow">Сброс</button>
-      <span id="flowHint" class="muted"></span>
-    </div>
+  <label>Количество:</label>
+  <input id="qty" type="number" placeholder="Напр. 5 или -2" />
 
-    <div class="kv" style="margin-top:10px;">
-      <div>Товар (SKU):</div><div id="skuView" class="muted">—</div>
-      <div>Полка (LOC):</div><div id="locView" class="muted">—</div>
-      <div>Количество:</div>
-      <div>
-        <input id="qty" type="number" step="1" value="1" style="width:120px;"/>
-        <button class="qbtn" data-d="+1">+1</button>
-        <button class="qbtn" data-d="+5">+5</button>
-        <button class="qbtn" data-d="-1">−1</button>
-      </div>
-    </div>
+  <label>Оператор:</label>
+  <input id="user" placeholder="Например Влад" />
 
-    <div class="row" style="margin-top:10px;">
-      <button id="doPut">Размещение</button>
-      <span id="opStatus" class="muted"></span>
-    </div>
-  </div>
+  <button onclick="sendMove('putaway')">➕ Пополнение</button>
+  <button onclick="sendMove('pick')">➖ Списание</button>
 
-  <!-- Лог -->
-  <div class="card">
-    <div style="font-weight:700;">Лог</div>
-    <div id="log" class="muted"></div>
-  </div>
+  <hr />
+  <button onclick="insertTest('product')">🔍 Вставить тестовый товар</button>
+  <button onclick="insertTest('location')">📍 Вставить тестовую полку</button>
 
-<script>
-/* ===== лог ===== */
-const logBox=document.getElementById('log');
-function log(m){const t=new Date().toLocaleTimeString('ru-RU');logBox.textContent+=`[${t}] ${m}\n`;logBox.scrollTop=logBox.scrollHeight;}
-window.onerror=(msg,src,l,c,e)=>{log(`JS error: ${msg} @${l}:${c}`);if(e&&e.stack)log(String(e.stack));};
+  <div id="status"></div>
 
-/* ===== индикатор живого JS ===== */
-document.getElementById('jsLive').style.display='inline';
+  <script>
+    const API_URL = "https://bf1ea7d4a0c5.ngrok-free.app";
+    const API_KEY = "supersecret123";
 
-/* ===== DOM ===== */
-const $=s=>document.querySelector(s);
-const statusCam=$('#camStatus'), statusOp=$('#opStatus'), flowHint=$('#flowHint');
-const skuView=$('#skuView'), locView=$('#locView');
+    function insertTest(type) {
+      const testQRs = {
+        product: "INV1|P;SKU=TEST123",
+        location: "INV1|L;LOC=A-01",
+      };
+      document.getElementById(type).value = testQRs[type];
+    }
 
-/* ===== состояние ===== */
-let stream=null, track=null, devices=[], idx=-1;
-let detector=null, detectTimer=null;
-const state={ stage:'idle', sku:null, loc:null };
+    async function sendMove(action) {
+      const product = document.getElementById("product").value.trim();
+      const location = document.getElementById("location").value.trim();
+      const qty = parseInt(document.getElementById("qty").value);
+      const user = document.getElementById("user").value.trim();
+      const opId = "op_" + Date.now();
 
-/* ===== конфиг ===== */
-const DEFAULT_API_URL='http://127.0.0.1:8000';
-const DEFAULT_API_KEY='supersecret123';
-const DEFAULT_DEVICE='android-01';
-const cfg={ get url(){return localStorage.getItem('apiUrl')||DEFAULT_API_URL;}, set url(v){localStorage.setItem('apiUrl',v);},
-            get key(){return localStorage.getItem('apiKey')||DEFAULT_API_KEY;}, set key(v){localStorage.setItem('apiKey',v);},
-            get device(){return localStorage.getItem('deviceId')||DEFAULT_DEVICE;}, set device(v){localStorage.setItem('deviceId',v);} };
-function loadCfg(){ $('#apiUrl').value=cfg.url; $('#apiKey').value=cfg.key; $('#deviceId').value=cfg.device; log('Конфиг загружен.'); }
-$('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=>$('#cfgStatus').textContent='',1200); log('Конфиг сохранён.'); };
+      if (!product || !location || !qty || !user) {
+        return show("⚠️ Все поля обязательны");
+      }
 
-/* ===== API (FastAPI) ===== */
-function base(){ return (localStorage.getItem('apiUrl')||$('#apiUrl').value||'').replace(/\/+$/,''); }
-function apiKey(){ return (localStorage.getItem('apiKey')||$('#apiKey').value||'').trim(); }
+      const payload = {
+        sku: extractSKU(product),
+        loc_code: extractLOC(location),
+        qty_delta: action === "putaway" ? Math.abs(qty) : -Math.abs(qty),
+        action,
+        device_id: "test-device",
+        user_name: user,
+        op_id: opId,
+        note: ""
+      };
 
-async function getJson(path){
-  const url = base() + path;
-  const r = await fetch(url, { headers: { 'x_api_key': apiKey() } });
-  const text = await r.text();
-  let data; try { data = JSON.parse(text); } catch(e){ throw new Error('Bad JSON from API'); }
-  if(!r.ok){ throw new Error((data && (data.detail||data.error)) || ('HTTP '+r.status)); }
-  return data;
-}
+      try {
+        const res = await fetch(API_URL + "/move", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": API_KEY,
+          },
+          body: JSON.stringify(payload)
+        });
 
-async function postJson(path, body){
-  const url = base() + path;
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type':'application/json', 'x_api_key': apiKey() },
-    body: JSON.stringify(body)
-  });
-  const text = await r.text();
-  let data; try { data = JSON.parse(text); } catch(e){ throw new Error('Bad JSON from API'); }
-  if(!r.ok){ throw new Error((data && (data.detail||data.error)) || ('HTTP '+r.status)); }
-  return data;
-}
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Ошибка");
 
-/* ===== кнопки сетки ===== */
-$('#btnSelftest').onclick=()=>{ alert('Клики работают 👍'); log('Selftest: click ОК'); };
+        show(`✅ Готово: ${data.sku} @ ${data.loc_code}, теперь ${data.new_qty}шт`);
+      } catch (err) {
+        show("❌ " + err.message);
+      }
+    }
 
-$('#btnPing').onclick = async ()=>{
-  try{ const r = await getJson('/ping'); log('PING ok: '+(r.ts||'')); }
-  catch(e){ log('PING error: '+e.message); alert('Пинг не прошёл: '+e.message); }
-};
+    function extractSKU(code) {
+      const match = code.match(/^INV1\|P;SKU=([A-Za-z0-9_.\-]+)$/);
+      if (!match) throw new Error("QR товара недействителен");
+      return match[1];
+    }
 
-document.body.insertAdjacentHTML('beforeend', `
-  <div class="card" style="display:none">
-    <div class="row">
-      <label>QR товара:</label><input id="qrProd" size="32" placeholder="INV1|P;SKU=SKU123">
-      <button id="btnProd">/product</button>
-      <label>QR полки:</label><input id="qrLoc" size="32" placeholder="INV1|L;LOC=SHELF_A1">
-      <button id="btnLoc">/location</button>
-      <label>SKU:</label><input id="sku" size="16" value="SKU123">
-      <button id="btnWhere">/where</button>
-    </div>
-  </div>
-`);
+    function extractLOC(code) {
+      const match = code.match(/^INV1\|L;LOC=([A-Za-z0-9_.\-]+)$/);
+      if (!match) throw new Error("QR полки недействителен");
+      return match[1];
+    }
 
-$('#btnProd').onclick = async ()=>{
-  const raw = $('#qrProd')?.value?.trim() || `INV1|P;SKU=${state.sku||''}`;
-  if(!raw){ return alert('Укажи QR товара'); }
-  try{
-    const r = await getJson('/product?code='+encodeURIComponent(raw));
-    log('PRODUCT: '+JSON.stringify(r)); statusOp.textContent = 'Товар ок';
-  }catch(e){ log('PRODUCT error: '+e.message); alert(e.message); }
-};
-
-$('#btnLoc').onclick = async ()=>{
-  const raw = $('#qrLoc')?.value?.trim() || `INV1|L;LOC=${state.loc||''}`;
-  if(!raw){ return alert('Укажи QR полки'); }
-  try{
-    const r = await getJson('/location?code='+encodeURIComponent(raw));
-    log('LOCATION: '+JSON.stringify(r)); statusOp.textContent = 'Полка ок';
-  }catch(e){ log('LOCATION error: '+e.message); alert(e.message); }
-};
-
-$('#btnWhere').onclick = async ()=>{
-  const s = ($('#sku')?.value||state.sku||'').trim();
-  if(!s){ return alert('Укажи SKU'); }
-  try{
-    const r = await getJson('/where?sku='+encodeURIComponent(s));
-    log('WHERE: '+JSON.stringify(r));
-  }catch(e){ log('WHERE error: '+e.message); alert(e.message); }
-};
-
-/* ===== камера ===== */
-async function stopCam(){ try{ if(stream){stream.getTracks().forEach(t=>t.stop());} }catch(_){}
-  stream=null; track=null; statusCam.textContent='Камера остановлена'; log('Камера остановлена.'); stopDetect(); }
-async function listCameras(){ try{ if(!stream){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ } }
-  const devs=await navigator.mediaDevices.enumerateDevices(); devices=devs.filter(d=>d.kind==='videoinput'); log('Камер найдено: '+devices.length); return devices;
-} catch(e){ log('enumerateDevices error: '+e.name+' '+e.message); return []; } }
-async function attach(s,msg){ stream=s; const v=$('#preview'); v.srcObject=stream; await v.play(); track=stream.getVideoTracks()[0]; statusCam.textContent=msg; log(msg); }
-async function startByFacing(){ await stopCam(); try{
-  const s=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'}, width:{ideal:640,max:640}, height:{ideal:480,max:480}, frameRate:{ideal:15,max:15} }, audio:false });
-  await attach(s,'Камера: environment (640×480@15)'); return true;
-} catch(e){ log('env error: '+e.name+' '+e.message); return false; } }
-async function startByIndex(i){ await stopCam(); if(!devices.length) await listCameras(); if(!devices.length){ statusCam.textContent='Нет камер'; return; }
-  const dev=devices[i%devices.length]; try{
-    const s=await navigator.mediaDevices.getUserMedia({ video:{ deviceId:{exact:dev.deviceId}, width:{ideal:640,max:640}, height:{ideal:480,max:480}, frameRate:{ideal:15,max:15} }, audio:false });
-    idx=i; await attach(s,'Камера: '+(dev.label||'без имени')+' (640×480@15)');
-  } catch(e){ statusCam.textContent='Ошибка старта: '+e.name; log('by device error: '+e.name+' '+e.message); } }
-async function startCam(){ log('Старт камеры…'); const ok=await startByFacing(); if(ok) return; const cams=await listCameras(); if(!cams.length){ statusCam.textContent='Камеры не найдены/нет разрешения'; return; } await startByIndex(0); }
-async function switchCam(){ const cams=await listCameras(); if(!cams.length){ statusCam.textContent='Нет камер для переключения'; return; } idx=(idx+1)%cams.length; await startByIndex(idx); }
-document.getElementById('startCam').onclick=startCam;
-document.getElementById('stopCam').onclick=stopCam;
-document.getElementById('switchCam').onclick=switchCam;
-
-/* ===== BarcodeDetector ===== */
-async function ensureDetector(){
-  if(detector) return true;
-  if('BarcodeDetector' in window){
-    try{ detector=new BarcodeDetector({formats:['qr_code']}); log('BarcodeDetector готов.'); return true; }
-    catch(e){ log('BD init error: '+e.name+' '+e.message); }
-  }
-  flowHint.textContent='Сканер недоступен (нет BarcodeDetector)'; return false;
-}
-function stopDetect(){ if(detectTimer){ clearInterval(detectTimer); detectTimer=null; } }
-function startDetect(stage){
-  if(!stream){ flowHint.textContent='Сначала стартуй камеру'; return; }
-  ensureDetector().then(ok=>{
-    if(!ok) return;
-    state.stage=stage;
-    if(stage==='product'){ flowHint.textContent='Жду QR товара… (INV1|P;...)'; }
-    if(stage==='location'){ flowHint.textContent='Жду QR полки… (INV1|L;...)'; }
-    stopDetect();
-    detectTimer=setInterval(()=> detectOnce(), 300);
-  });
-}
-async function detectOnce(){
-  try{
-    const v=$('#preview');
-    const c=document.createElement('canvas'); c.width=320; c.height=240;
-    const ctx=c.getContext('2d'); ctx.drawImage(v,0,0,c.width,c.height);
-    const bmp=await (window.createImageBitmap?window.createImageBitmap(c):new Promise(res=>{const img=new Image();img.onload=()=>res(img);img.src=c.toDataURL();}));
-    const codes=await detector.detect(bmp);
-    if(!codes || !codes.length) return;
-    const txt=codes[0].rawValue||'';
-    onScan(txt);
-  }catch(_){}
-}
-
-/* ===== парсер QR ===== */
-function parseQr(payload){
-  if(!payload || typeof payload!=='string') return null;
-  if(!payload.startsWith('INV1|')) return null;
-  const rest=payload.substring(5);
-  const parts=rest.split(';').filter(Boolean);
-  const head=parts.shift();
-  const kv={}; parts.forEach(s=>{ const m=s.split('='); if(m.length===2) kv[m[0]]=m[1]; });
-  if(head==='P'){ return {type:'product', sku: kv.SKU || parts[0] || null}; }
-  if(head==='L'){ return {type:'location', loc: kv.LOC || parts[0] || null}; }
-  return null;
-}
-
-/* ===== скан по этапам ===== */
-function onScan(txt){
-  if(navigator.vibrate) navigator.vibrate(20);
-  const meta=parseQr(txt);
-  if(state.stage==='product'){
-    if(!meta || meta.type!=='product' || !meta.sku){ flowHint.textContent='Это не QR товара. Жду INV1|P;...'; return; }
-    state.sku=meta.sku; skuView.textContent=state.sku;
-    stopDetect(); state.stage='idle';
-    flowHint.textContent='Товар считан. Теперь «Сканировать полку».';
-    log('Считан товар: '+state.sku);
-  } else if(state.stage==='location'){
-    if(!meta || meta.type!=='location' || !meta.loc){ flowHint.textContent='Это не QR полки. Жду INV1|L;...'; return; }
-    state.loc=meta.loc; locView.textContent=state.loc;
-    stopDetect(); state.stage='idle';
-    flowHint.textContent='Полка считана. Введи количество и нажми «Размещение».';
-    log('Считана полка: '+state.loc);
-  }
-}
-document.getElementById('scanProduct').onclick=()=> startDetect('product');
-document.getElementById('scanLocation').onclick=()=> startDetect('location');
-document.getElementById('resetFlow').onclick=resetFlow;
-function resetFlow(){
-  state.stage='idle'; state.sku=null; state.loc=null;
-  skuView.textContent='—'; locView.textContent='—';
-  stopDetect(); statusOp.textContent=''; flowHint.textContent='Готово. Начни со «Сканировать товар».';
-}
-
-/* ===== количество и размещение (POST /move) ===== */
-document.querySelectorAll('.qbtn').forEach(b=> b.onclick=()=>{
-  const d=Number(b.getAttribute('data-d')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+d);
-});
-document.getElementById('doPut').onclick=async()=>{
-  const qty=Number($('#qty').value||0);
-  if(!state.sku){ statusOp.textContent='Сначала отсканируй товар'; return; }
-  if(!state.loc){ statusOp.textContent='Сначала отсканируй полку'; return; }
-  if(qty<=0){ statusOp.textContent='Количество должно быть > 0'; return; }
-  try{
-    statusOp.textContent='Отправляю…';
-    const r=await postJson('/move',{
-      sku:state.sku, loc_code:state.loc, qty_delta:qty, action:'putaway',
-      device_id:(localStorage.getItem('deviceId')||'android-01'),
-      user_name:'worker@local',
-      op_id:(crypto.randomUUID?crypto.randomUUID():String(Date.now())),
-      note:''
-    });
-    if(navigator.vibrate) navigator.vibrate(20);
-    statusOp.innerHTML=`<span class="ok">ОК. Остаток на ${state.loc}: <b>${r.new_qty}</b>${r.dedup?' (повтор)':''}</span>`;
-    log(`PUT ${state.sku} -> ${state.loc} x${qty}: new=${r.new_qty}`);
-    resetFlow();
-  }catch(e){
-    if(navigator.vibrate) navigator.vibrate([30,40,30]);
-    statusOp.innerHTML=`<span class="err">Ошибка: ${e.message}</span>`;
-    log('PUT error: '+e.message);
-  }
-};
-
-/* ===== init ===== */
-loadCfg();
-resetFlow();
-log('Готово. Стартуй камеру → Товар → Полка → Количество → Размещение.');
-</script>
+    function show(msg) {
+      document.getElementById("status").textContent = msg;
+    }
+  </script>
 </body>
 </html>
