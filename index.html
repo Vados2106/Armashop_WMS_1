@@ -99,4 +99,144 @@ const cfg={ get url(){return localStorage.getItem('apiUrl')||DEFAULT_API_URL;}, 
             get key(){return localStorage.getItem('apiKey')||DEFAULT_API_KEY;}, set key(v){localStorage.setItem('apiKey',v);},
             get device(){return localStorage.getItem('deviceId')||DEFAULT_DEVICE;}, set device(v){localStorage.setItem('deviceId',v);} };
 function loadCfg(){ $('#apiUrl').value=cfg.url; $('#apiKey').value=cfg.key; $('#deviceId').value=cfg.device; }
-$('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено';
+$('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=>$('#cfgStatus').textContent='',1200); };
+
+/* === простой GET к API === */
+async function apiGet(path, params){
+  const url = new URL(cfg.url);
+  url.searchParams.set('path', path);
+  url.searchParams.set('key', cfg.key);
+  Object.entries(params||{}).forEach(([k,v])=> url.searchParams.set(k, v));
+  const r = await fetch(url.toString(), { method:'GET' });
+  const j = await r.json();
+  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
+}
+
+/* === камера === */
+async function stopCam(){ try{ if(stream){stream.getTracks().forEach(t=>t.stop());} }catch(_){}
+  stream=null; track=null; statusCam.textContent='Камера остановлена'; log('Камера остановлена.'); stopDetect(); }
+async function listCameras(){ try{ if(!stream){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ } }
+  const devs=await navigator.mediaDevices.enumerateDevices(); devices=devs.filter(d=>d.kind==='videoinput'); log('Камер найдено: '+devices.length); return devices;
+} catch(e){ log('enumerateDevices error: '+e.name+' '+e.message); return []; } }
+async function attach(s,msg){ stream=s; const v=$('#preview'); v.srcObject=stream; await v.play(); track=stream.getVideoTracks()[0]; statusCam.textContent=msg; log(msg); }
+async function startByFacing(){ await stopCam(); try{
+  const s=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'}, width:{ideal:640,max:640}, height:{ideal:480,max:480}, frameRate:{ideal:15,max:15} }, audio:false });
+  await attach(s,'Камера: environment (640×480@15)'); return true;
+} catch(e){ log('env error: '+e.name+' '+e.message); return false; } }
+async function startByIndex(i){ await stopCam(); if(!devices.length) await listCameras(); if(!devices.length){ statusCam.textContent='Нет камер'; return; }
+  const dev=devices[i%devices.length]; try{
+    const s=await navigator.mediaDevices.getUserMedia({ video:{ deviceId:{exact:dev.deviceId}, width:{ideal:640,max:640}, height:{ideal:480,max:480}, frameRate:{ideal:15,max:15} }, audio:false });
+    idx=i; await attach(s,'Камера: '+(dev.label||'без имени')+' (640×480@15)');
+  } catch(e){ statusCam.textContent='Ошибка старта: '+e.name; log('by device error: '+e.name+' '+e.message); } }
+async function startCam(){ log('Старт камеры…'); const ok=await startByFacing(); if(ok) return; const cams=await listCameras(); if(!cams.length){ statusCam.textContent='Камеры не найдены/нет разрешения'; return; } await startByIndex(0); }
+async function switchCam(){ const cams=await listCameras(); if(!cams.length){ statusCam.textContent='Нет камер для переключения'; return; } idx=(idx+1)%cams.length; await startByIndex(idx); }
+
+document.getElementById('startCam').onclick=startCam;
+document.getElementById('stopCam').onclick=stopCam;
+document.getElementById('switchCam').onclick=switchCam;
+
+/* === BarcodeDetector === */
+async function ensureDetector(){
+  if(detector) return true;
+  if('BarcodeDetector' in window){
+    try{ detector=new BarcodeDetector({formats:['qr_code']}); log('BarcodeDetector готов.'); return true; }
+    catch(e){ log('BD init error: '+e.name+' '+e.message); }
+  }
+  flowHint.textContent='Сканер недоступен (нет BarcodeDetector)'; return false;
+}
+function stopDetect(){ if(detectTimer){ clearInterval(detectTimer); detectTimer=null; } }
+function startDetect(stage){
+  if(!stream){ flowHint.textContent='Сначала стартуй камеру'; return; }
+  ensureDetector().then(ok=>{
+    if(!ok) return;
+    state.stage=stage;
+    if(stage==='product'){ flowHint.textContent='Жду QR товара… (INV1|P;...)'; }
+    if(stage==='location'){ flowHint.textContent='Жду QR полки… (INV1|L;...)'; }
+    stopDetect();
+    detectTimer=setInterval(()=> detectOnce(), 300);
+  });
+}
+async function detectOnce(){
+  try{
+    const v=$('#preview');
+    const c=document.createElement('canvas'); c.width=320; c.height=240;
+    const ctx=c.getContext('2d'); ctx.drawImage(v,0,0,c.width,c.height);
+    const bmp=await (window.createImageBitmap?window.createImageBitmap(c):new Promise(res=>{const img=new Image();img.onload=()=>res(img);img.src=c.toDataURL();}));
+    const codes=await detector.detect(bmp);
+    if(!codes || !codes.length) return;
+    const txt=codes[0].rawValue||'';
+    onScan(txt);
+  }catch(_){}
+}
+
+/* === парсер QR === */
+function parseQr(payload){
+  if(!payload || typeof payload!=='string') return null;
+  if(!payload.startsWith('INV1|')) return null;
+  const rest=payload.substring(5);
+  const parts=rest.split(';').filter(Boolean);
+  const head=parts.shift();
+  const kv={}; parts.forEach(s=>{ const m=s.split('='); if(m.length===2) kv[m[0]]=m[1]; });
+  if(head==='P'){ return {type:'product', sku: kv.SKU || parts[0] || null}; }
+  if(head==='L'){ return {type:'location', loc: kv.LOC || parts[0] || null}; }
+  return null;
+}
+
+/* === скан по этапам === */
+function onScan(txt){
+  if(navigator.vibrate) navigator.vibrate(20);
+  const meta=parseQr(txt);
+  if(state.stage==='product'){
+    if(!meta || meta.type!=='product' || !meta.sku){ flowHint.textContent='Это не QR товара. Жду INV1|P;...'; return; }
+    state.sku=meta.sku; $('#skuView').textContent=state.sku;
+    stopDetect(); state.stage='idle'; flowHint.textContent='Товар считан. Теперь «Сканировать полку».';
+    log('Считан товар: '+state.sku);
+  } else if(state.stage==='location'){
+    if(!meta || meta.type!=='location' || !meta.loc){ flowHint.textContent='Это не QR полки. Жду INV1|L;...'; return; }
+    state.loc=meta.loc; $('#locView').textContent=state.loc;
+    stopDetect(); state.stage='idle'; flowHint.textContent='Полка считана. Введи количество и нажми «Размещение».';
+    log('Считана полка: '+state.loc);
+  }
+}
+document.getElementById('scanProduct').onclick=()=> startDetect('product');
+document.getElementById('scanLocation').onclick=()=> startDetect('location');
+document.getElementById('resetFlow').onclick=resetFlow;
+function resetFlow(){
+  state.stage='idle'; state.sku=null; state.loc=null;
+  $('#skuView').textContent='—'; $('#locView').textContent='—';
+  stopDetect(); statusOp.textContent=''; flowHint.textContent='Готово. Начни со «Сканировать товар».';
+}
+
+/* === количество и размещение (GET move) === */
+document.querySelectorAll('.qbtn').forEach(b=> b.onclick=()=>{
+  const d=Number(b.getAttribute('data-d')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+d);
+});
+document.getElementById('doPut').onclick=async()=>{
+  const qty=Number($('#qty').value||0);
+  if(!state.sku){ statusOp.textContent='Сначала отсканируй товар'; return; }
+  if(!state.loc){ statusOp.textContent='Сначала отсканируй полку'; return; }
+  if(qty<=0){ statusOp.textContent='Количество должно быть > 0'; return; }
+  try{
+    statusOp.textContent='Отправляю…';
+    const r=await apiGet('move',{
+      sku:state.sku, loc_code:state.loc, qty_delta:qty, action:'putaway',
+      user:'worker@local', device_id:(localStorage.getItem('deviceId')||'android-01'),
+      op_id:(crypto.randomUUID?crypto.randomUUID():String(Date.now())), note:''
+    });
+    statusOp.innerHTML=`<span class="ok">ОК. Остаток на ${state.loc}: <b>${r.new_qty}</b></span>`;
+    log(`PUT ${state.sku} -> ${state.loc} x${qty}: new=${r.new_qty}`);
+    resetFlow();
+  }catch(e){
+    statusOp.innerHTML=`<span class="err">Ошибка: ${e.message}</span>`;
+    log('PUT error: '+e.message);
+  }
+};
+
+/* === init === */
+loadCfg();
+resetFlow();
+log('Готово. Стартуй камеру → Товар → Полка → Количество → Размещение.');
+</script>
+</body>
+</html>
