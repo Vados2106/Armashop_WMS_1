@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>WMS Scanner — v1.8 step-by-step</title>
+  <title>WMS Scanner — v1.8.2 step-by-step (GET move)</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:0;padding:16px;}
     .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0;}
@@ -19,10 +19,9 @@
   </style>
 </head>
 <body>
-  <h3>📦 WMS Scanner — <span class="ok">v1.8 step-by-step</span></h3>
-  <div class="muted">Порядок: Старт камеры → Товар → Полка → Ввести количество → Размещение.</div>
+  <h3>📦 WMS Scanner — <span class="ok">v1.8.2</span> (GET move)</h3>
+  <div class="muted">Старт камеры → Товар → Полка → Количество → Размещение.</div>
 
-  <!-- Конфиг -->
   <div class="card">
     <div class="row">
       <label>API URL:</label>
@@ -38,7 +37,6 @@
     </div>
   </div>
 
-  <!-- Управление камерой -->
   <div class="card">
     <div class="row">
       <button id="startCam">Старт камеры (640×480@15)</button>
@@ -49,7 +47,6 @@
     <video id="preview" playsinline></video>
   </div>
 
-  <!-- Пошаговый процесс -->
   <div class="card">
     <div class="row">
       <button id="scanProduct">Сканировать товар</button>
@@ -76,179 +73,30 @@
     </div>
   </div>
 
-  <!-- Лог -->
   <div class="card">
     <div style="font-weight:700;">Лог</div>
     <div id="log" class="muted"></div>
   </div>
 
 <script>
-/* ===== лог ===== */
 const logBox=document.getElementById('log');
 function log(m){const t=new Date().toLocaleTimeString('ru-RU');logBox.textContent+=`[${t}] ${m}\n`;logBox.scrollTop=logBox.scrollHeight;}
 window.onerror=(msg,src,l,c,e)=>{log(`JS error: ${msg} @${l}:${c}`);if(e&&e.stack)log(String(e.stack));};
 
-/* ===== DOM ===== */
 const $=s=>document.querySelector(s);
 const statusCam=$('#camStatus'), statusOp=$('#opStatus'), flowHint=$('#flowHint');
 const skuView=$('#skuView'), locView=$('#locView');
 
-/* ===== состояние ===== */
 let stream=null, track=null, devices=[], idx=-1;
 let detector=null, detectTimer=null;
 const state={ stage:'idle', sku:null, loc:null };
 const DETECT_INTERVAL_MS=300;
 
-/* ===== конфиг/API ===== */
+/* === конфиг === */
 const DEFAULT_API_URL='https://script.google.com/macros/s/AKfycbzRi65nCYMc8uqQAW1ujUtzEpg9SIsRfsKebnSy9TzfqJQIVnPBHECXw4V1LUGxzzclgA/exec';
 const DEFAULT_API_KEY='Sklad_1507'; const DEFAULT_DEVICE='android-01';
 const cfg={ get url(){return localStorage.getItem('apiUrl')||DEFAULT_API_URL;}, set url(v){localStorage.setItem('apiUrl',v);},
             get key(){return localStorage.getItem('apiKey')||DEFAULT_API_KEY;}, set key(v){localStorage.setItem('apiKey',v);},
             get device(){return localStorage.getItem('deviceId')||DEFAULT_DEVICE;}, set device(v){localStorage.setItem('deviceId',v);} };
 function loadCfg(){ $('#apiUrl').value=cfg.url; $('#apiKey').value=cfg.key; $('#deviceId').value=cfg.device; }
-$('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=>$('#cfgStatus').textContent='',1200); };
-
-async function apiPost(path, body){
-  const r = await fetch(cfg.url, {
-    method: 'POST',
-    // ВАЖНО: text/plain → simple request, без OPTIONS
-    headers: {'Content-Type': 'text/plain'},
-    body: JSON.stringify({ path, apiKey: cfg.key, ...body })
-  });
-  const j = await r.json().catch(()=>({error:'Bad JSON'}));
-  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
-  return j;
-}
-
-
-/* ===== камера ===== */
-async function stopCam(){ try{ if(stream){stream.getTracks().forEach(t=>t.stop());} }catch(_){}
-  stream=null; track=null; statusCam.textContent='Камера остановлена'; log('Камера остановлена.'); stopDetect(); }
-async function listCameras(){ try{ if(!stream){ try{ const tmp=await navigator.mediaDevices.getUserMedia({video:true}); tmp.getTracks().forEach(t=>t.stop()); }catch(_){ } }
-  const devs=await navigator.mediaDevices.enumerateDevices(); devices=devs.filter(d=>d.kind==='videoinput'); log('Камер найдено: '+devices.length); return devices;
-} catch(e){ log('enumerateDevices error: '+e.name+' '+e.message); return []; } }
-async function attach(s,msg){ stream=s; const v=$('#preview'); v.srcObject=stream; await v.play(); track=stream.getVideoTracks()[0]; statusCam.textContent=msg; log(msg); }
-async function startByFacing(){ await stopCam(); try{
-  const s=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'}, width:{ideal:640,max:640}, height:{ideal:480,max:480}, frameRate:{ideal:15,max:15} }, audio:false });
-  await attach(s,'Камера: environment (640×480@15)'); return true;
-} catch(e){ log('env error: '+e.name+' '+e.message); return false; } }
-async function startByIndex(i){ await stopCam(); if(!devices.length) await listCameras(); if(!devices.length){ statusCam.textContent='Нет камер'; return; }
-  const dev=devices[i%devices.length]; try{
-    const s=await navigator.mediaDevices.getUserMedia({ video:{ deviceId:{exact:dev.deviceId}, width:{ideal:640,max:640}, height:{ideal:480,max:480}, frameRate:{ideal:15,max:15} }, audio:false });
-    idx=i; await attach(s,'Камера: '+(dev.label||'без имени')+' (640×480@15)');
-  } catch(e){ statusCam.textContent='Ошибка старта: '+e.name; log('by device error: '+e.name+' '+e.message); } }
-async function startCam(){ log('Старт камеры…'); const ok=await startByFacing(); if(ok) return; const cams=await listCameras(); if(!cams.length){ statusCam.textContent='Камеры не найдены/нет разрешения'; return; } await startByIndex(0); }
-async function switchCam(){ const cams=await listCameras(); if(!cams.length){ statusCam.textContent='Нет камер для переключения'; return; } idx=(idx+1)%cams.length; await startByIndex(idx); }
-
-document.getElementById('startCam').onclick=startCam;
-document.getElementById('stopCam').onclick=stopCam;
-document.getElementById('switchCam').onclick=switchCam;
-
-/* ===== BarcodeDetector (щадящий) ===== */
-async function ensureDetector(){
-  if(detector) return true;
-  if('BarcodeDetector' in window){
-    try{ detector=new BarcodeDetector({formats:['qr_code']}); log('BarcodeDetector готов.'); return true; }
-    catch(e){ log('BD init error: '+e.name+' '+e.message); }
-  }
-  flowHint.textContent='Сканер недоступен (нет BarcodeDetector)'; return false;
-}
-function stopDetect(){ if(detectTimer){ clearInterval(detectTimer); detectTimer=null; } }
-function startDetect(stage){
-  if(!stream){ flowHint.textContent='Сначала стартуй камеру'; return; }
-  ensureDetector().then(ok=>{
-    if(!ok) return;
-    state.stage=stage;
-    if(stage==='product'){ flowHint.textContent='Жду QR товара… (INV1|P;...)'; }
-    if(stage==='location'){ flowHint.textContent='Жду QR полки… (INV1|L;...)'; }
-    stopDetect();
-    detectTimer=setInterval(()=> detectOnce(), DETECT_INTERVAL_MS);
-  });
-}
-
-async function detectOnce(){
-  try{
-    const v=$('#preview');
-    const c=document.createElement('canvas'); c.width=320; c.height=240;
-    const ctx=c.getContext('2d'); ctx.drawImage(v,0,0,c.width,c.height);
-    const bmp=await (window.createImageBitmap?window.createImageBitmap(c):new Promise(res=>{const img=new Image();img.onload=()=>res(img);img.src=c.toDataURL();}));
-    const codes=await detector.detect(bmp);
-    if(!codes || !codes.length) return;
-    const txt=codes[0].rawValue||'';
-    onScan(txt);
-  }catch(_){ /* ignore */ }
-}
-
-/* ===== парсер QR (как на сервере) ===== */
-function parseQr(payload){
-  if(!payload || typeof payload!=='string') return null;
-  if(!payload.startsWith('INV1|')) return null;
-  const rest=payload.substring(5); // после INV1|
-  const parts=rest.split(';').filter(Boolean);
-  const head=parts.shift();
-  const kv={}; parts.forEach(s=>{ const m=s.split('='); if(m.length===2) kv[m[0]]=m[1]; });
-  // поддерживаем два формата: короткий (P;SKU) и с ключом (P;SKU=XXXX)
-  if(head==='P'){ return {type:'product', sku: kv.SKU || parts[0] || null}; }
-  if(head==='L'){ return {type:'location', loc: kv.LOC || parts[0] || null}; }
-  return null;
-}
-
-/* ===== обработка скана по этапам ===== */
-function onScan(txt){
-  if(navigator.vibrate) navigator.vibrate(20);
-  const meta=parseQr(txt);
-  if(state.stage==='product'){
-    if(!meta || meta.type!=='product' || !meta.sku){ flowHint.textContent='Это не QR товара. Жду INV1|P;...'; return; }
-    state.sku=meta.sku; skuView.textContent=state.sku;
-    stopDetect(); state.stage='idle';
-    flowHint.textContent='Товар считан. Теперь нажми «Сканировать полку».';
-    log('Считан товар: '+state.sku);
-  } else if(state.stage==='location'){
-    if(!meta || meta.type!=='location' || !meta.loc){ flowHint.textContent='Это не QR полки. Жду INV1|L;...'; return; }
-    state.loc=meta.loc; locView.textContent=state.loc;
-    stopDetect(); state.stage='idle';
-    flowHint.textContent='Полка считана. Введи количество и нажми «Размещение».';
-    log('Считана полка: '+state.loc);
-  } else {
-    // вне этапа игнорируем, чтобы не было «дребезга»
-  }
-}
-
-/* ===== кнопки этапов ===== */
-document.getElementById('scanProduct').onclick=()=> startDetect('product');
-document.getElementById('scanLocation').onclick=()=> startDetect('location');
-document.getElementById('resetFlow').onclick=resetFlow;
-function resetFlow(){
-  state.stage='idle'; state.sku=null; state.loc=null; skuView.textContent='—'; locView.textContent='—';
-  stopDetect(); statusOp.textContent=''; flowHint.textContent='Готово. Сначала — «Сканировать товар».';
-}
-
-/* ===== количество и размещение ===== */
-document.querySelectorAll('.qbtn').forEach(b=> b.onclick=()=>{
-  const d=Number(b.getAttribute('data-d')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+d);
-});
-document.getElementById('doPut').onclick=async()=>{
-  const qty=Number($('#qty').value||0);
-  if(!state.sku){ statusOp.textContent='Сначала отсканируй товар'; return; }
-  if(!state.loc){ statusOp.textContent='Сначала отсканируй полку'; return; }
-  if(qty<=0){ statusOp.textContent='Количество должно быть > 0'; return; }
-  try{
-    statusOp.textContent='Отправляю…';
-    const r=await apiPost('move',{ sku:state.sku, loc_code:state.loc, qty_delta:qty, action:'putaway', user:'worker@local', device_id:(localStorage.getItem('deviceId')||'android-01'), op_id:(crypto.randomUUID?crypto.randomUUID():String(Date.now())), note:'' });
-    statusOp.innerHTML=`<span class="ok">ОК. Остаток на ${state.loc}: <b>${r.new_qty}</b></span>`;
-    log(`PUT ${state.sku} -> ${state.loc} x${qty}: new=${r.new_qty}`);
-    // авто-ресет для следующей операции
-    resetFlow();
-  }catch(e){
-    statusOp.innerHTML=`<span class="err">Ошибка: ${e.message}</span>`;
-    log('PUT error1: ' + e.message);
-  }
-};
-
-/* ===== init ===== */
-loadCfg();
-resetFlow();
-log('Готово. Стартуй камеру → Товар → Полка → Количество → Размещение.');
-</script>
-</body>
-</html>
+$('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено';
