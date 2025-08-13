@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>WMS Scanner — v1.8.3 LIVE</title>
+  <title>WMS Scanner — v1.8.3 LIVE (FastAPI)</title>
   <style>
     body{font-family:system-ui,Arial,sans-serif;margin:0;padding:16px;}
     .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0;}
@@ -29,11 +29,11 @@
   <div class="card">
     <div class="row">
       <label>API URL:</label>
-      <input id="apiUrl" value="https://script.google.com/macros/s/AKfycbzRi65nCYMc8uqQAW1ujUtzEpg9SIsRfsKebnSy9TzfqJQIVnPBHECXw4V1LUGxzzclgA/exec" size="50"/>
+      <input id="apiUrl" value="http://127.0.0.1:8000" size="50"/>
     </div>
     <div class="row" style="margin-top:8px;">
       <label>API Key:</label>
-      <input id="apiKey" value="Sklad_1507" size="20"/>
+      <input id="apiKey" value="supersecret123" size="20"/>
       <label>Device ID:</label>
       <input id="deviceId" value="android-01" size="14"/>
       <button id="saveCfg">Сохранить</button>
@@ -107,32 +107,88 @@ let detector=null, detectTimer=null;
 const state={ stage:'idle', sku:null, loc:null };
 
 /* ===== конфиг ===== */
-const DEFAULT_API_URL='https://script.google.com/macros/s/AKfycbzRi65nCYMc8uqQAW1ujUtzEpg9SIsRfsKebnSy9TzfqJQIVnPBHECXw4V1LUGxzzclgA/exec';
-const DEFAULT_API_KEY='Sklad_1507'; const DEFAULT_DEVICE='android-01';
+const DEFAULT_API_URL='http://127.0.0.1:8000';
+const DEFAULT_API_KEY='supersecret123';
+const DEFAULT_DEVICE='android-01';
 const cfg={ get url(){return localStorage.getItem('apiUrl')||DEFAULT_API_URL;}, set url(v){localStorage.setItem('apiUrl',v);},
             get key(){return localStorage.getItem('apiKey')||DEFAULT_API_KEY;}, set key(v){localStorage.setItem('apiKey',v);},
             get device(){return localStorage.getItem('deviceId')||DEFAULT_DEVICE;}, set device(v){localStorage.setItem('deviceId',v);} };
 function loadCfg(){ $('#apiUrl').value=cfg.url; $('#apiKey').value=cfg.key; $('#deviceId').value=cfg.device; log('Конфиг загружен.'); }
 $('#saveCfg').onclick=()=>{ cfg.url=$('#apiUrl').value.trim(); cfg.key=$('#apiKey').value.trim(); cfg.device=$('#deviceId').value.trim(); $('#cfgStatus').textContent='Сохранено'; setTimeout(()=>$('#cfgStatus').textContent='',1200); log('Конфиг сохранён.'); };
 
-/* ===== API ===== */
-async function apiGet(path, params){
-  const url = new URL(cfg.url);
-  url.searchParams.set('path', path);
-  url.searchParams.set('key', cfg.key);
-  Object.entries(params||{}).forEach(([k,v])=> url.searchParams.set(k, v));
-  const r = await fetch(url.toString(), { method:'GET' });
-  const txt = await r.text(); // сначала text, чтобы поймать странные ответы
-  let j={};
-  try{ j = JSON.parse(txt); }catch(_){ throw new Error('Bad JSON from API'); }
-  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
-  return j;
+/* ===== API (FastAPI) ===== */
+function base(){ return (localStorage.getItem('apiUrl')||$('#apiUrl').value||'').replace(/\/+$/,''); }
+function apiKey(){ return (localStorage.getItem('apiKey')||$('#apiKey').value||'').trim(); }
+
+async function getJson(path){
+  const url = base() + path;
+  const r = await fetch(url, { headers: { 'x_api_key': apiKey() } });
+  const text = await r.text();
+  let data; try { data = JSON.parse(text); } catch(e){ throw new Error('Bad JSON from API'); }
+  if(!r.ok){ throw new Error((data && (data.detail||data.error)) || ('HTTP '+r.status)); }
+  return data;
 }
-$('#btnPing').onclick=async()=>{
-  try{ const r=await apiGet('ping',{}); log('PING ok: '+(r.ts||'')); }
+
+async function postJson(path, body){
+  const url = base() + path;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'x_api_key': apiKey() },
+    body: JSON.stringify(body)
+  });
+  const text = await r.text();
+  let data; try { data = JSON.parse(text); } catch(e){ throw new Error('Bad JSON from API'); }
+  if(!r.ok){ throw new Error((data && (data.detail||data.error)) || ('HTTP '+r.status)); }
+  return data;
+}
+
+/* ===== кнопки сетки ===== */
+$('#btnSelftest').onclick=()=>{ alert('Клики работают 👍'); log('Selftest: click ОК'); };
+
+$('#btnPing').onclick = async ()=>{
+  try{ const r = await getJson('/ping'); log('PING ok: '+(r.ts||'')); }
   catch(e){ log('PING error: '+e.message); alert('Пинг не прошёл: '+e.message); }
 };
-$('#btnSelftest').onclick=()=>{ alert('Клики работают 👍'); log('Selftest: click ОК'); };
+
+document.body.insertAdjacentHTML('beforeend', `
+  <div class="card" style="display:none">
+    <div class="row">
+      <label>QR товара:</label><input id="qrProd" size="32" placeholder="INV1|P;SKU=SKU123">
+      <button id="btnProd">/product</button>
+      <label>QR полки:</label><input id="qrLoc" size="32" placeholder="INV1|L;LOC=SHELF_A1">
+      <button id="btnLoc">/location</button>
+      <label>SKU:</label><input id="sku" size="16" value="SKU123">
+      <button id="btnWhere">/where</button>
+    </div>
+  </div>
+`);
+
+$('#btnProd').onclick = async ()=>{
+  const raw = $('#qrProd')?.value?.trim() || `INV1|P;SKU=${state.sku||''}`;
+  if(!raw){ return alert('Укажи QR товара'); }
+  try{
+    const r = await getJson('/product?code='+encodeURIComponent(raw));
+    log('PRODUCT: '+JSON.stringify(r)); statusOp.textContent = 'Товар ок';
+  }catch(e){ log('PRODUCT error: '+e.message); alert(e.message); }
+};
+
+$('#btnLoc').onclick = async ()=>{
+  const raw = $('#qrLoc')?.value?.trim() || `INV1|L;LOC=${state.loc||''}`;
+  if(!raw){ return alert('Укажи QR полки'); }
+  try{
+    const r = await getJson('/location?code='+encodeURIComponent(raw));
+    log('LOCATION: '+JSON.stringify(r)); statusOp.textContent = 'Полка ок';
+  }catch(e){ log('LOCATION error: '+e.message); alert(e.message); }
+};
+
+$('#btnWhere').onclick = async ()=>{
+  const s = ($('#sku')?.value||state.sku||'').trim();
+  if(!s){ return alert('Укажи SKU'); }
+  try{
+    const r = await getJson('/where?sku='+encodeURIComponent(s));
+    log('WHERE: '+JSON.stringify(r));
+  }catch(e){ log('WHERE error: '+e.message); alert(e.message); }
+};
 
 /* ===== камера ===== */
 async function stopCam(){ try{ if(stream){stream.getTracks().forEach(t=>t.stop());} }catch(_){}
@@ -230,7 +286,7 @@ function resetFlow(){
   stopDetect(); statusOp.textContent=''; flowHint.textContent='Готово. Начни со «Сканировать товар».';
 }
 
-/* ===== количество и размещение (GET move) ===== */
+/* ===== количество и размещение (POST /move) ===== */
 document.querySelectorAll('.qbtn').forEach(b=> b.onclick=()=>{
   const d=Number(b.getAttribute('data-d')); const el=$('#qty'); el.value=Math.max(0, Number(el.value||0)+d);
 });
@@ -241,15 +297,19 @@ document.getElementById('doPut').onclick=async()=>{
   if(qty<=0){ statusOp.textContent='Количество должно быть > 0'; return; }
   try{
     statusOp.textContent='Отправляю…';
-    const r=await apiGet('move',{
+    const r=await postJson('/move',{
       sku:state.sku, loc_code:state.loc, qty_delta:qty, action:'putaway',
-      user:'worker@local', device_id:(localStorage.getItem('deviceId')||'android-01'),
-      op_id:(crypto.randomUUID?crypto.randomUUID():String(Date.now())), note:''
+      device_id:(localStorage.getItem('deviceId')||'android-01'),
+      user_name:'worker@local',
+      op_id:(crypto.randomUUID?crypto.randomUUID():String(Date.now())),
+      note:''
     });
-    statusOp.innerHTML=`<span class="ok">ОК. Остаток на ${state.loc}: <b>${r.new_qty}</b></span>`;
+    if(navigator.vibrate) navigator.vibrate(20);
+    statusOp.innerHTML=`<span class="ok">ОК. Остаток на ${state.loc}: <b>${r.new_qty}</b>${r.dedup?' (повтор)':''}</span>`;
     log(`PUT ${state.sku} -> ${state.loc} x${qty}: new=${r.new_qty}`);
     resetFlow();
   }catch(e){
+    if(navigator.vibrate) navigator.vibrate([30,40,30]);
     statusOp.innerHTML=`<span class="err">Ошибка: ${e.message}</span>`;
     log('PUT error: '+e.message);
   }
